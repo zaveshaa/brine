@@ -19,7 +19,7 @@
 #define ZMAX (0.35f)
 
 #define FAR_DEPTH 1.0e6f
-#define SPLAT 0.82f
+#define SPLAT 0.85f
 
 #define X(ret, name, params) PFN_##name name;
 BRINE_GL_FUNCTIONS
