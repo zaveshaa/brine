@@ -19,7 +19,7 @@
 #define ZMAX (0.35f)
 
 #define FAR_DEPTH 1.0e6f
-#define SPLAT 0.85f
+#define SPLAT 0.82f
 
 #define X(ret, name, params) PFN_##name name;
 BRINE_GL_FUNCTIONS
@@ -155,8 +155,8 @@ static const char *FS_COMP_A =
     "  vec3 zenith  = vec3(0.16, 0.34, 0.72);\n"
     "  vec3 c = mix(horizon, zenith, pow(y, 0.85));\n"
     "  float s = max(dot(d, normalize(uSunDir)), 0.0);\n"
-    "  c += vec3(1.0, 0.95, 0.82) * pow(s, 400.0) * 2.0;\n"
-    "  c += vec3(1.0, 0.93, 0.78) * pow(s, 8.0) * 0.10;\n"
+    "  c += vec3(1.0, 0.95, 0.82) * pow(s, 400.0) * 3.0;\n"
+    "  c += vec3(1.0, 0.93, 0.78) * pow(s, 8.0) * 0.25;\n"
     "  return c;\n"
     "}\n"
     "vec3 tubShade(vec3 p, int face){\n"
@@ -772,13 +772,13 @@ int main(int argc, char **argv)
             glUniform2f(l_step, 0.0f, steppx / (float)fh);
             glDrawArrays(GL_TRIANGLES, 0, 3);
 
-            ss = rad_px * 4.0f;
+            ss = rad_px * 5.5f;
             steppx = 3.0f * ss / 16.0f;
             glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, blurB.color);
             glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 10.0f);
+            glUniform1f(l_sr, spacing * 12.0f);
             glUniform2f(l_step, steppx / (float)fw, 0.0f);
             glDrawArrays(GL_TRIANGLES, 0, 3);
 
