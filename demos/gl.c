@@ -19,7 +19,7 @@
 #define ZMAX (0.35f)
 
 #define FAR_DEPTH 1.0e6f
-#define SPLAT 0.80f
+#define SPLAT 0.85f
 
 #define X(ret, name, params) PFN_##name name;
 BRINE_GL_FUNCTIONS
@@ -229,7 +229,7 @@ static const char *FS_COMP_B =
     "  vec3 n = normalize(cross(Px - P, Py - P));\n"
     "  vec3 Nx = eyePos(vUV + vec2(uInvRes.x, 0.0), texture(uNarrow, vUV + vec2(uInvRes.x, 0.0)).r);\n"
     "  vec3 Ny = eyePos(vUV + vec2(0.0, uInvRes.y), texture(uNarrow, vUV + vec2(0.0, uInvRes.y)).r);\n"
-    "  vec3 nd = normalize(cross(Nx - P, Ny - P));\n"
+    "  vec3 nd = n;\n"
     "  float wx = P.x * 34.0 + uTime * 2.1;\n"
     "  float wz = P.z * 31.0 - uTime * 1.7;\n"
     "  float wq = (P.x + P.z) * 19.0 + uTime * 1.3;\n"
@@ -247,14 +247,12 @@ static const char *FS_COMP_B =
     "  vec3 refr = sceneColor(P, T);\n"
     "  refr = mix(refr, refr * vec3(0.62, 0.90, 1.0), 0.38);\n"
     "  refr *= exp(-vec3(0.28, 0.09, 0.035) * (d * 0.15));\n"
-    "  float fres = 0.03 + 0.97 * pow(1.0 - clamp(dot(V, n), 0.0, 1.0), 4.0);\n"
+    "  float fres = 0.05 + 0.95 * pow(1.0 - clamp(dot(V, n), 0.0, 1.0), 3.0);\n"
     "  vec3 col = mix(refr, refl, fres);\n"
-    "  float sp1 = pow(max(dot(reflect(-V, nd), normalize(uSunDir)), 0.0), 400.0);\n"
     "  float sp2 = pow(max(dot(R, normalize(uSunDir)), 0.0), 40.0);\n"
-    "  col += vec3(1.0, 0.98, 0.95) * sp1 * 2.5;\n"
-    "  col += vec3(0.90, 0.95, 1.0) * sp2 * 0.15;\n"
+    "  col += vec3(0.90, 0.95, 1.0) * sp2 * 0.10;\n"
     "  float dn = texture(uNarrow, vUV).r;\n"
-    "  float foam = clamp((dn - d) * 22.0, 0.0, 1.0);\n"
+    "  float foam = clamp((dn - d) * 22.0, 0.0, 0.4);\n"
     "  col = mix(col, vec3(0.95, 0.97, 1.0), foam * 0.75);\n"
     "  frag = vec4(col, 1.0);\n"
     "}\n";
@@ -549,7 +547,7 @@ int main(int argc, char **argv)
     p.viscosity = 0.02f;
     p.damping = 0.005f;
     p.surface_tension = 0.00f;
-    p.h = spacing * 1.9f;
+    p.h = spacing * 1.5f;
 
     b = brine_new(&p);
     if (b == NULL) {
@@ -739,14 +737,14 @@ int main(int argc, char **argv)
             glUniform1i(l_tex, 0);
             glUniform2f(l_res, (float)fw, (float)fh);
 
-            ss = rad_px * 0.7f;
+            ss = rad_px * 1.0f;
             steppx = 3.0f * ss / 16.0f;
             glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
             glViewport(0, 0, fw, fh);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, depthT.color);
             glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 2.0f);
+            glUniform1f(l_sr, spacing * 3.0f);
             glUniform2f(l_step, steppx / (float)fw, 0.0f);
             glBindVertexArray(vao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -757,19 +755,42 @@ int main(int argc, char **argv)
             glUniform2f(l_step, 0.0f, steppx / (float)fh);
             glDrawArrays(GL_TRIANGLES, 0, 3);
 
-            ss = rad_px * 1.4f;
+            ss = rad_px * 2.5f;
             steppx = 3.0f * ss / 16.0f;
             glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, blurB.color);
             glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 4.0f);
+            glUniform1f(l_sr, spacing * 8.0f);
             glUniform2f(l_step, steppx / (float)fw, 0.0f);
+            glBindVertexArray(vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, blurB.fbo);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, blurA.color);
+            glUniform2f(l_step, 0.0f, steppx / (float)fh);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+
+            ss = rad_px * 4.0f;
+            steppx = 3.0f * ss / 16.0f;
+            glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, blurB.color);
+            glUniform1f(l_ss, ss);
+            glUniform1f(l_sr, spacing * 10.0f);
+            glUniform2f(l_step, steppx / (float)fw, 0.0f);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, blurB.fbo);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, blurA.color);
+            glUniform2f(l_step, 0.0f, steppx / (float)fh);
             glDrawArrays(GL_TRIANGLES, 0, 3);
 
             glBindFramebuffer(GL_FRAMEBUFFER, wideT.fbo);
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, blurA.color);
+            glBindTexture(GL_TEXTURE_2D, blurB.color);
             glUniform2f(l_step, 0.0f, steppx / (float)fh);
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
