@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0 - 2026-10-15
+
+- Metaball screen-space renderer: particles splat one shared density field,
+  the surface is taken at an isolevel and normals come from its gradient.
+- Replaces the sphere-impostor depth pass and the bilateral-blur chain.
+- Single RG32F field target; `GL_RG`, `GL_RG32F` and `GL_ONE` bindings.
+
 ## 0.1.0 - 2026-10-14
 
 - Position-based fluid solver (Müller et al. 2013): poly6 density, spiky

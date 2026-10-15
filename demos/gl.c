@@ -1,5 +1,3 @@
-
-
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
@@ -18,8 +16,7 @@
 #define ZMIN (-0.35f)
 #define ZMAX (0.35f)
 
-#define FAR_DEPTH 1.0e6f
-#define SPLAT 1.1f
+#define SPLAT 1.6f
 
 #define X(ret, name, params) PFN_##name name;
 BRINE_GL_FUNCTIONS
@@ -38,7 +35,6 @@ typedef struct {
 typedef struct {
     GLuint fbo;
     GLuint color;
-    GLuint depth;
 } Target;
 
 static const char *VS_DEPTH =
@@ -49,35 +45,25 @@ static const char *VS_DEPTH =
     "uniform float uRadius;\n"
     "uniform float uPxPerUnit;\n"
     "out vec3 vEye;\n"
-    "out float vHalf;\n"
     "void main(){\n"
     "  vec4 eye = uView * vec4(aPos, 1.0);\n"
     "  vEye = eye.xyz;\n"
     "  gl_Position = uProj * eye;\n"
     "  float dist = max(-eye.z, 0.001);\n"
-    "  float ps = clamp(uPxPerUnit * uRadius / dist, 1.0, 128.0);\n"
-    "  gl_PointSize = ps;\n"
-    "  vHalf = 0.5 * ps * dist / uPxPerUnit;\n"
+    "  gl_PointSize = clamp(uPxPerUnit * uRadius / dist, 1.0, 256.0);\n"
     "}\n";
 
 static const char *FS_DEPTH =
     "#version 330 core\n"
     "in vec3 vEye;\n"
-    "in float vHalf;\n"
-    "uniform mat4 uProj;\n"
     "out vec4 frag;\n"
     "void main(){\n"
     "  vec2 ndc = gl_PointCoord * 2.0 - 1.0;\n"
     "  float d2 = dot(ndc, ndc);\n"
     "  if (d2 > 1.0) discard;\n"
-    "  float R = vHalf;\n"
-    "  vec2 off = ndc * R;\n"
-    "  float rr = R * R - dot(off, off);\n"
-    "  if (rr < 0.0) discard;\n"
-    "  float z = vEye.z + sqrt(rr);\n"
-    "  float clipz = uProj[2][2] * z + uProj[3][2];\n"
-    "  gl_FragDepth = 0.5 * (clipz / (-z)) + 0.5;\n"
-    "  frag = vec4(-z, 0.0, 0.0, 1.0);\n"
+    "  float w = 1.0 - d2;\n"
+    "  w = w * w;\n"
+    "  frag = vec4(w, w * (-vEye.z), 0.0, 1.0);\n"
     "}\n";
 
 static const char *VS_QUAD =
@@ -89,58 +75,11 @@ static const char *VS_QUAD =
     "  gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);\n"
     "}\n";
 
-static const char *FS_BLUR =
-    "#version 330 core\n"
-    "in vec2 vUV;\n"
-    "out vec4 frag;\n"
-    "uniform sampler2D uTex;\n"
-    "uniform vec2 uStep;\n"
-    "uniform vec2 uRes;\n"
-    "uniform float uSigmaS;\n"
-    "uniform float uSigmaR;\n"
-    "void main(){\n"
-    "  float center = texture(uTex, vUV).r;\n"
-    "  bool cvalid = center < 1.0e5;\n"
-    "  float sum = cvalid ? center : 0.0;\n"
-    "  float wsum = cvalid ? 1.0 : 0.0;\n"
-    "  float wtot = cvalid ? 1.0 : 0.0;\n"
-    "  for (int i = 1; i <= 16; i++) {\n"
-    "    float fi = float(i);\n"
-    "    vec2 o = uStep * fi;\n"
-    "    vec2 px = o * uRes;\n"
-    "    float ws = exp(-dot(px, px) / (2.0 * uSigmaS * uSigmaS));\n"
-    "    float a = texture(uTex, vUV + o).r;\n"
-    "    float b = texture(uTex, vUV - o).r;\n"
-    "    float da = a - center;\n"
-    "    float db = b - center;\n"
-    "    bool va = a < 1.0e5;\n"
-    "    bool vb = b < 1.0e5;\n"
-    "    float wa;\n"
-    "    float wb;\n"
-    "    wtot += 2.0 * ws;\n"
-    "    if (cvalid) {\n"
-    "      wa = va ? ws * exp(-da * da / (2.0 * uSigmaR * uSigmaR)) : 0.0;\n"
-    "      wb = vb ? ws * exp(-db * db / (2.0 * uSigmaR * uSigmaR)) : 0.0;\n"
-    "    } else {\n"
-    "      wa = va ? ws : 0.0;\n"
-    "      wb = vb ? ws : 0.0;\n"
-    "    }\n"
-    "    sum += a * wa + b * wb;\n"
-    "    wsum += wa + wb;\n"
-    "  }\n"
-    "  if (!cvalid && wsum < 0.7 * wtot) {\n"
-    "    frag = vec4(1.0e6, 0.0, 0.0, 1.0);\n"
-    "    return;\n"
-    "  }\n"
-    "  frag = vec4(sum / wsum, 0.0, 0.0, 1.0);\n"
-    "}\n";
-
 static const char *FS_COMP_A =
     "#version 330 core\n"
     "in vec2 vUV;\n"
     "out vec4 frag;\n"
-    "uniform sampler2D uDepth;\n"
-    "uniform sampler2D uNarrow;\n"
+    "uniform sampler2D uField;\n"
     "uniform mat4 uProj;\n"
     "uniform mat4 uInvView;\n"
     "uniform vec3 uCamPos;\n"
@@ -149,6 +88,7 @@ static const char *FS_COMP_A =
     "uniform float uTime;\n"
     "uniform vec3 uBmin;\n"
     "uniform vec3 uBmax;\n"
+    "const float MB_THRESH = 0.5;\n"
     "vec3 skyColor(vec3 d){\n"
     "  float y = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);\n"
     "  vec3 horizon = vec3(0.78, 0.85, 0.95);\n"
@@ -215,21 +155,24 @@ static const char *FS_COMP_B =
     "  return (uInvView * vec4(eye, 1.0)).xyz;\n"
     "}\n"
     "void main(){\n"
-    "  float d = texture(uDepth, vUV).r;\n"
-    "  if (d > 1.0e5) {\n"
+    "  vec2 fg = texture(uField, vUV).rg;\n"
+    "  float field = fg.r;\n"
+    "  if (field < MB_THRESH) {\n"
     "    vec2 ndc = vUV * 2.0 - 1.0;\n"
     "    vec3 eye = vec3(ndc.x / uProj[0][0], ndc.y / uProj[1][1], -1.0);\n"
     "    vec3 dir = normalize((uInvView * vec4(eye, 0.0)).xyz);\n"
     "    frag = vec4(sceneColor(uCamPos, dir), 1.0);\n"
     "    return;\n"
     "  }\n"
+    "  float d = fg.g / fg.r;\n"
+    "  vec2 fgx = texture(uField, vUV + vec2(uInvRes.x, 0.0)).rg;\n"
+    "  vec2 fgy = texture(uField, vUV + vec2(0.0, uInvRes.y)).rg;\n"
+    "  float dx = (fgx.r > MB_THRESH) ? fgx.g / fgx.r : d;\n"
+    "  float dy = (fgy.r > MB_THRESH) ? fgy.g / fgy.r : d;\n"
     "  vec3 P = eyePos(vUV, d);\n"
-    "  vec3 Px = eyePos(vUV + vec2(uInvRes.x, 0.0), texture(uDepth, vUV + vec2(uInvRes.x, 0.0)).r);\n"
-    "  vec3 Py = eyePos(vUV + vec2(0.0, uInvRes.y), texture(uDepth, vUV + vec2(0.0, uInvRes.y)).r);\n"
+    "  vec3 Px = eyePos(vUV + vec2(uInvRes.x, 0.0), dx);\n"
+    "  vec3 Py = eyePos(vUV + vec2(0.0, uInvRes.y), dy);\n"
     "  vec3 n = normalize(cross(Px - P, Py - P));\n"
-    "  vec3 Nx = eyePos(vUV + vec2(uInvRes.x, 0.0), texture(uNarrow, vUV + vec2(uInvRes.x, 0.0)).r);\n"
-    "  vec3 Ny = eyePos(vUV + vec2(0.0, uInvRes.y), texture(uNarrow, vUV + vec2(0.0, uInvRes.y)).r);\n"
-    "  vec3 nd = n;\n"
     "  float wx = P.x * 34.0 + uTime * 2.1;\n"
     "  float wz = P.z * 31.0 - uTime * 1.7;\n"
     "  float wq = (P.x + P.z) * 19.0 + uTime * 1.3;\n"
@@ -237,10 +180,8 @@ static const char *FS_COMP_B =
     "  float dwdz = -31.0 * sin(wx) * sin(wz) * 0.5 + 19.0 * cos(wq) * 0.5;\n"
     "  vec3 rp = vec3(-dwdx, 0.0, -dwdz);\n"
     "  n = normalize(n + rp * 0.006);\n"
-    "  nd = normalize(nd + rp * 0.014);\n"
     "  vec3 V = normalize(uCamPos - P);\n"
     "  if (dot(n, V) < 0.0) n = -n;\n"
-    "  if (dot(nd, V) < 0.0) nd = -nd;\n"
     "  vec3 R = reflect(-V, n);\n"
     "  vec3 T = refract(-V, n, 0.7519);\n"
     "  vec3 refl = sceneColor(P, R);\n"
@@ -249,11 +190,8 @@ static const char *FS_COMP_B =
     "  refr *= exp(-vec3(0.28, 0.09, 0.035) * (d * 0.15));\n"
     "  float fres = 0.05 + 0.95 * pow(1.0 - clamp(dot(V, n), 0.0, 1.0), 3.0);\n"
     "  vec3 col = mix(refr, refl, fres);\n"
-    "  float sp2 = pow(max(dot(R, normalize(uSunDir)), 0.0), 40.0);\n"
-    "  col += vec3(0.90, 0.95, 1.0) * sp2 * 0.10;\n"
-    "  float dn = texture(uNarrow, vUV).r;\n"
-
-
+    "  float sp2 = pow(max(dot(R, normalize(uSunDir)), 0.0), 60.0);\n"
+    "  col += vec3(0.90, 0.95, 1.0) * sp2 * 0.25;\n"
     "  frag = vec4(col, 1.0);\n"
     "}\n";
 
@@ -377,33 +315,20 @@ static void camera(float view[16], float inv[16], const float eye[3],
     inv[15] = 1.0f;
 }
 
-static int make_target(Target *t, int w, int h, int with_depth)
+static int make_target(Target *t, int w, int h)
 {
     glGenTextures(1, &t->color);
     glBindTexture(GL_TEXTURE_2D, t->color);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, (GLsizei)w, (GLsizei)h, 0, GL_RED,
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, (GLsizei)w, (GLsizei)h, 0, GL_RG,
                  GL_FLOAT, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glGenFramebuffers(1, &t->fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, t->fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                            t->color, 0);
-    t->depth = 0;
-    if (with_depth) {
-        glGenTextures(1, &t->depth);
-        glBindTexture(GL_TEXTURE_2D, t->depth);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, (GLsizei)w,
-                     (GLsizei)h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                               GL_TEXTURE_2D, t->depth, 0);
-    }
     {
         GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -414,9 +339,6 @@ static int make_target(Target *t, int w, int h, int with_depth)
 static void free_target(Target *t)
 {
     glDeleteTextures(1, &t->color);
-    if (t->depth != 0) {
-        glDeleteTextures(1, &t->depth);
-    }
     glDeleteFramebuffers(1, &t->fbo);
 }
 
@@ -520,12 +442,8 @@ int main(int argc, char **argv)
     GLuint vao = 0;
     GLuint vbo = 0;
     GLuint prog_depth;
-    GLuint prog_blur;
     GLuint prog_comp;
-    Target depthT = {0, 0, 0};
-    Target blurA = {0, 0, 0};
-    Target blurB = {0, 0, 0};
-    Target wideT = {0, 0, 0};
+    Target fieldT = {0, 0};
     float *vertex;
     size_t cap;
     double prev;
@@ -587,7 +505,6 @@ int main(int argc, char **argv)
     }
 
     prog_depth = program(VS_DEPTH, &FS_DEPTH, 1);
-    prog_blur = program(VS_QUAD, &FS_BLUR, 1);
     {
         const char *comp[2];
         comp[0] = FS_COMP_A;
@@ -669,16 +586,10 @@ int main(int argc, char **argv)
         if (wpx != fw || hpx != fh) {
             fw = wpx;
             fh = hpx;
-            if (depthT.fbo != 0) {
-                free_target(&depthT);
-                free_target(&blurA);
-                free_target(&blurB);
-                free_target(&wideT);
+            if (fieldT.fbo != 0) {
+                free_target(&fieldT);
             }
-            if (make_target(&depthT, fw, fh, 1) != 0 ||
-                make_target(&blurA, fw, fh, 0) != 0 ||
-                make_target(&blurB, fw, fh, 0) != 0 ||
-                make_target(&wideT, fw, fh, 0) != 0) {
+            if (make_target(&fieldT, fw, fh) != 0) {
                 fprintf(stderr, "brine: incomplete framebuffer\n");
                 return 1;
             }
@@ -701,13 +612,13 @@ int main(int argc, char **argv)
             GLint l_radius;
             GLint l_px;
 
-            glBindFramebuffer(GL_FRAMEBUFFER, depthT.fbo);
+            glBindFramebuffer(GL_FRAMEBUFFER, fieldT.fbo);
             glViewport(0, 0, fw, fh);
-            glClearColor(FAR_DEPTH, 0.0f, 0.0f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            glEnable(GL_DEPTH_TEST);
-            glDepthFunc(GL_LESS);
-            glDisable(GL_BLEND);
+            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glDisable(GL_DEPTH_TEST);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE);
             glUseProgram(prog_depth);
             l_view = glGetUniformLocation(prog_depth, "uView");
             l_proj = glGetUniformLocation(prog_depth, "uProj");
@@ -722,88 +633,7 @@ int main(int argc, char **argv)
         }
 
         {
-            GLint l_tex = glGetUniformLocation(prog_blur, "uTex");
-            GLint l_step = glGetUniformLocation(prog_blur, "uStep");
-            GLint l_res = glGetUniformLocation(prog_blur, "uRes");
-            GLint l_ss = glGetUniformLocation(prog_blur, "uSigmaS");
-            GLint l_sr = glGetUniformLocation(prog_blur, "uSigmaR");
-            float ppu = (float)fh / (2.0f * tanf(fovy * 0.5f));
-            float rad_px = spacing * SPLAT * ppu;
-            float ss;
-            float steppx;
-
-            glDisable(GL_DEPTH_TEST);
-            glUseProgram(prog_blur);
-            glUniform1i(l_tex, 0);
-            glUniform2f(l_res, (float)fw, (float)fh);
-
-            ss = rad_px * 3.0f;
-            steppx = 3.0f * ss / 16.0f;
-            glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
-            glViewport(0, 0, fw, fh);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, depthT.color);
-            glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 200.0f);
-            glUniform2f(l_step, steppx / (float)fw, 0.0f);
-            glBindVertexArray(vao);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-
-            glBindFramebuffer(GL_FRAMEBUFFER, blurB.fbo);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, blurA.color);
-            glUniform2f(l_step, 0.0f, steppx / (float)fh);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-
-            ss = rad_px * 4.0f;
-            steppx = 3.0f * ss / 16.0f;
-            glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, blurB.color);
-            glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 200.0f);
-            glUniform2f(l_step, steppx / (float)fw, 0.0f);
-            glBindVertexArray(vao);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-
-            glBindFramebuffer(GL_FRAMEBUFFER, blurB.fbo);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, blurA.color);
-            glUniform2f(l_step, 0.0f, steppx / (float)fh);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-
-            ss = rad_px * 8.0f;
-            steppx = 3.0f * ss / 16.0f;
-            glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, blurB.color);
-            glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 200.0f);
-            glUniform2f(l_step, steppx / (float)fw, 0.0f);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-
-            glBindFramebuffer(GL_FRAMEBUFFER, blurB.fbo);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, blurA.color);
-            glUniform2f(l_step, 0.0f, steppx / (float)fh);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-
-            glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, blurB.color);
-            glUniform2f(l_step, 0.0f, steppx / (float)fh);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-
-            glBindFramebuffer(GL_FRAMEBUFFER, wideT.fbo);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, blurA.color);
-            glUniform2f(l_step, 0.0f, steppx / (float)fh);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-        }
-
-        {
-            GLint l_depth = glGetUniformLocation(prog_comp, "uDepth");
-            GLint l_narrow = glGetUniformLocation(prog_comp, "uNarrow");
+            GLint l_field = glGetUniformLocation(prog_comp, "uField");
             GLint l_proj = glGetUniformLocation(prog_comp, "uProj");
             GLint l_inv = glGetUniformLocation(prog_comp, "uInvView");
             GLint l_cam = glGetUniformLocation(prog_comp, "uCamPos");
@@ -819,11 +649,8 @@ int main(int argc, char **argv)
             glDisable(GL_BLEND);
             glUseProgram(prog_comp);
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, wideT.color);
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, blurB.color);
-            glUniform1i(l_depth, 0);
-            glUniform1i(l_narrow, 1);
+            glBindTexture(GL_TEXTURE_2D, fieldT.color);
+            glUniform1i(l_field, 0);
             glUniformMatrix4fv(l_proj, 1, GL_FALSE, proj);
             glUniformMatrix4fv(l_inv, 1, GL_FALSE, inv);
             glUniform3f(l_cam, eye[0], eye[1], eye[2]);
@@ -834,9 +661,6 @@ int main(int argc, char **argv)
             glUniform3f(l_bmax, XMAX, YMAX, ZMAX);
             glBindVertexArray(vao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, 0);
-            glActiveTexture(GL_TEXTURE0);
         }
 
         glfwSwapBuffers(win);
@@ -877,16 +701,12 @@ int main(int argc, char **argv)
         }
     }
 
-    if (depthT.fbo != 0) {
-        free_target(&depthT);
-        free_target(&blurA);
-        free_target(&blurB);
-        free_target(&wideT);
+    if (fieldT.fbo != 0) {
+        free_target(&fieldT);
     }
     glDeleteBuffers(1, &vbo);
     glDeleteVertexArrays(1, &vao);
     glDeleteProgram(prog_depth);
-    glDeleteProgram(prog_blur);
     glDeleteProgram(prog_comp);
     free(vertex);
     brine_free(b);
