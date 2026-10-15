@@ -744,7 +744,7 @@ int main(int argc, char **argv)
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, depthT.color);
             glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 16.0f);
+            glUniform1f(l_sr, spacing * 80.0f);
             glUniform2f(l_step, steppx / (float)fw, 0.0f);
             glBindVertexArray(vao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -761,7 +761,7 @@ int main(int argc, char **argv)
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, blurB.color);
             glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 30.0f);
+            glUniform1f(l_sr, spacing * 80.0f);
             glUniform2f(l_step, steppx / (float)fw, 0.0f);
             glBindVertexArray(vao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -778,7 +778,7 @@ int main(int argc, char **argv)
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, blurB.color);
             glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 40.0f);
+            glUniform1f(l_sr, spacing * 80.0f);
             glUniform2f(l_step, steppx / (float)fw, 0.0f);
             glDrawArrays(GL_TRIANGLES, 0, 3);
 
