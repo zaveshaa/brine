@@ -252,8 +252,8 @@ static const char *FS_COMP_B =
     "  float sp2 = pow(max(dot(R, normalize(uSunDir)), 0.0), 40.0);\n"
     "  col += vec3(0.90, 0.95, 1.0) * sp2 * 0.10;\n"
     "  float dn = texture(uNarrow, vUV).r;\n"
-    "  float foam = clamp((dn - d) * 22.0, 0.0, 0.4);\n"
-    "  col = mix(col, vec3(0.95, 0.97, 1.0), foam * 0.75);\n"
+
+
     "  frag = vec4(col, 1.0);\n"
     "}\n";
 
