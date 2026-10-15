@@ -17,6 +17,7 @@
 #define ZMAX (0.35f)
 
 #define SPLAT 1.6f
+#define FOAM_SPLAT 0.9f
 
 #define X(ret, name, params) PFN_##name name;
 BRINE_GL_FUNCTIONS
@@ -63,7 +64,42 @@ static const char *FS_DEPTH =
     "  if (d2 > 1.0) discard;\n"
     "  float w = 1.0 - d2;\n"
     "  w = w * w;\n"
-    "  frag = vec4(w, w * (-vEye.z), 0.0, 1.0);\n"
+    "  frag = vec4(w, w * (-vEye.z), 0.0, 0.0);\n"
+    "}\n";
+
+static const char *VS_FOAM =
+    "#version 330 core\n"
+    "layout(location=0) in vec3 aPos;\n"
+    "layout(location=1) in float aType;\n"
+    "uniform mat4 uView;\n"
+    "uniform mat4 uProj;\n"
+    "uniform float uRadius;\n"
+    "uniform float uPxPerUnit;\n"
+    "out vec3 vEye;\n"
+    "out float vType;\n"
+    "void main(){\n"
+    "  vec4 eye = uView * vec4(aPos, 1.0);\n"
+    "  vEye = eye.xyz;\n"
+    "  vType = aType;\n"
+    "  gl_Position = uProj * eye;\n"
+    "  float dist = max(-eye.z, 0.001);\n"
+    "  gl_PointSize = clamp(uPxPerUnit * uRadius / dist, 1.0, 64.0);\n"
+    "}\n";
+
+static const char *FS_FOAM =
+    "#version 330 core\n"
+    "in vec3 vEye;\n"
+    "in float vType;\n"
+    "out vec4 frag;\n"
+    "void main(){\n"
+    "  vec2 ndc = gl_PointCoord * 2.0 - 1.0;\n"
+    "  float d2 = dot(ndc, ndc);\n"
+    "  if (d2 > 1.0) discard;\n"
+    "  float w = 1.0 - d2;\n"
+    "  w = w * w;\n"
+    "  float foam = vType > 0.5 ? w : 0.0;\n"
+    "  float spray = vType > 0.5 ? 0.0 : w;\n"
+    "  frag = vec4(0.0, 0.0, foam, spray);\n"
     "}\n";
 
 static const char *VS_QUAD =
@@ -155,43 +191,48 @@ static const char *FS_COMP_B =
     "  return (uInvView * vec4(eye, 1.0)).xyz;\n"
     "}\n"
     "void main(){\n"
-    "  vec2 fg = texture(uField, vUV).rg;\n"
-    "  float field = fg.r;\n"
+    "  vec4 fld = texture(uField, vUV);\n"
+    "  float field = fld.r;\n"
+    "  vec3 col;\n"
     "  if (field < MB_THRESH) {\n"
     "    vec2 ndc = vUV * 2.0 - 1.0;\n"
     "    vec3 eye = vec3(ndc.x / uProj[0][0], ndc.y / uProj[1][1], -1.0);\n"
     "    vec3 dir = normalize((uInvView * vec4(eye, 0.0)).xyz);\n"
-    "    frag = vec4(sceneColor(uCamPos, dir), 1.0);\n"
-    "    return;\n"
+    "    col = sceneColor(uCamPos, dir);\n"
+    "  } else {\n"
+    "    float d = fld.g / fld.r;\n"
+    "    vec2 fgx = texture(uField, vUV + vec2(uInvRes.x, 0.0)).rg;\n"
+    "    vec2 fgy = texture(uField, vUV + vec2(0.0, uInvRes.y)).rg;\n"
+    "    float dx = (fgx.r > MB_THRESH) ? fgx.g / fgx.r : d;\n"
+    "    float dy = (fgy.r > MB_THRESH) ? fgy.g / fgy.r : d;\n"
+    "    vec3 P = eyePos(vUV, d);\n"
+    "    vec3 Px = eyePos(vUV + vec2(uInvRes.x, 0.0), dx);\n"
+    "    vec3 Py = eyePos(vUV + vec2(0.0, uInvRes.y), dy);\n"
+    "    vec3 n = normalize(cross(Px - P, Py - P));\n"
+    "    float wx = P.x * 34.0 + uTime * 2.1;\n"
+    "    float wz = P.z * 31.0 - uTime * 1.7;\n"
+    "    float wq = (P.x + P.z) * 19.0 + uTime * 1.3;\n"
+    "    float dwdx = 34.0 * cos(wx) * cos(wz) * 0.5 + 19.0 * cos(wq) * 0.5;\n"
+    "    float dwdz = -31.0 * sin(wx) * sin(wz) * 0.5 + 19.0 * cos(wq) * 0.5;\n"
+    "    vec3 rp = vec3(-dwdx, 0.0, -dwdz);\n"
+    "    n = normalize(n + rp * 0.006);\n"
+    "    vec3 V = normalize(uCamPos - P);\n"
+    "    if (dot(n, V) < 0.0) n = -n;\n"
+    "    vec3 R = reflect(-V, n);\n"
+    "    vec3 T = refract(-V, n, 0.7519);\n"
+    "    vec3 refl = sceneColor(P, R);\n"
+    "    vec3 refr = sceneColor(P, T);\n"
+    "    refr = mix(refr, refr * vec3(0.62, 0.90, 1.0), 0.38);\n"
+    "    refr *= exp(-vec3(0.28, 0.09, 0.035) * (d * 0.15));\n"
+    "    float fres = 0.05 + 0.95 * pow(1.0 - clamp(dot(V, n), 0.0, 1.0), 3.0);\n"
+    "    col = mix(refr, refl, fres);\n"
+    "    float sp2 = pow(max(dot(R, normalize(uSunDir)), 0.0), 60.0);\n"
+    "    col += vec3(0.90, 0.95, 1.0) * sp2 * 0.25;\n"
     "  }\n"
-    "  float d = fg.g / fg.r;\n"
-    "  vec2 fgx = texture(uField, vUV + vec2(uInvRes.x, 0.0)).rg;\n"
-    "  vec2 fgy = texture(uField, vUV + vec2(0.0, uInvRes.y)).rg;\n"
-    "  float dx = (fgx.r > MB_THRESH) ? fgx.g / fgx.r : d;\n"
-    "  float dy = (fgy.r > MB_THRESH) ? fgy.g / fgy.r : d;\n"
-    "  vec3 P = eyePos(vUV, d);\n"
-    "  vec3 Px = eyePos(vUV + vec2(uInvRes.x, 0.0), dx);\n"
-    "  vec3 Py = eyePos(vUV + vec2(0.0, uInvRes.y), dy);\n"
-    "  vec3 n = normalize(cross(Px - P, Py - P));\n"
-    "  float wx = P.x * 34.0 + uTime * 2.1;\n"
-    "  float wz = P.z * 31.0 - uTime * 1.7;\n"
-    "  float wq = (P.x + P.z) * 19.0 + uTime * 1.3;\n"
-    "  float dwdx = 34.0 * cos(wx) * cos(wz) * 0.5 + 19.0 * cos(wq) * 0.5;\n"
-    "  float dwdz = -31.0 * sin(wx) * sin(wz) * 0.5 + 19.0 * cos(wq) * 0.5;\n"
-    "  vec3 rp = vec3(-dwdx, 0.0, -dwdz);\n"
-    "  n = normalize(n + rp * 0.006);\n"
-    "  vec3 V = normalize(uCamPos - P);\n"
-    "  if (dot(n, V) < 0.0) n = -n;\n"
-    "  vec3 R = reflect(-V, n);\n"
-    "  vec3 T = refract(-V, n, 0.7519);\n"
-    "  vec3 refl = sceneColor(P, R);\n"
-    "  vec3 refr = sceneColor(P, T);\n"
-    "  refr = mix(refr, refr * vec3(0.62, 0.90, 1.0), 0.38);\n"
-    "  refr *= exp(-vec3(0.28, 0.09, 0.035) * (d * 0.15));\n"
-    "  float fres = 0.05 + 0.95 * pow(1.0 - clamp(dot(V, n), 0.0, 1.0), 3.0);\n"
-    "  vec3 col = mix(refr, refl, fres);\n"
-    "  float sp2 = pow(max(dot(R, normalize(uSunDir)), 0.0), 60.0);\n"
-    "  col += vec3(0.90, 0.95, 1.0) * sp2 * 0.25;\n"
+    "  float covf = 1.0 - exp(-fld.b * 3.0);\n"
+    "  float covs = 1.0 - exp(-fld.a * 3.0);\n"
+    "  col = mix(col, vec3(0.95, 0.96, 0.98), clamp(covf, 0.0, 1.0));\n"
+    "  col = mix(col, vec3(0.80, 0.89, 1.0), clamp(covs, 0.0, 1.0) * 0.85);\n"
     "  frag = vec4(col, 1.0);\n"
     "}\n";
 
@@ -319,8 +360,8 @@ static int make_target(Target *t, int w, int h)
 {
     glGenTextures(1, &t->color);
     glBindTexture(GL_TEXTURE_2D, t->color);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, (GLsizei)w, (GLsizei)h, 0, GL_RG,
-                 GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, (GLsizei)w, (GLsizei)h, 0,
+                 GL_RGBA, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -441,10 +482,14 @@ int main(int argc, char **argv)
     const float sun[3] = {-0.5f, 0.75f, 0.4f};
     GLuint vao = 0;
     GLuint vbo = 0;
+    GLuint svao = 0;
+    GLuint svbo = 0;
     GLuint prog_depth;
+    GLuint prog_foam;
     GLuint prog_comp;
     Target fieldT = {0, 0};
     float *vertex;
+    float *svertex;
     size_t cap;
     double prev;
     double acc = 0.0;
@@ -466,6 +511,7 @@ int main(int argc, char **argv)
     p.damping = 0.005f;
     p.surface_tension = 0.00f;
     p.h = spacing * 1.5f;
+    p.secondary = 1;
 
     b = brine_new(&p);
     if (b == NULL) {
@@ -505,6 +551,7 @@ int main(int argc, char **argv)
     }
 
     prog_depth = program(VS_DEPTH, &FS_DEPTH, 1);
+    prog_foam = program(VS_FOAM, &FS_FOAM, 1);
     {
         const char *comp[2];
         comp[0] = FS_COMP_A;
@@ -514,6 +561,11 @@ int main(int argc, char **argv)
 
     vertex = (float *)malloc(cap * 3 * sizeof(float) + 16);
     if (vertex == NULL) {
+        fprintf(stderr, "brine: out of memory\n");
+        return 1;
+    }
+    svertex = (float *)malloc(cap * 4 * sizeof(float) + 16);
+    if (svertex == NULL) {
         fprintf(stderr, "brine: out of memory\n");
         return 1;
     }
@@ -528,6 +580,20 @@ int main(int argc, char **argv)
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (GLsizei)(3 * sizeof(float)),
                           (const void *)0);
+
+    glGenVertexArrays(1, &svao);
+    glBindVertexArray(svao);
+    glEnable(GL_PROGRAM_POINT_SIZE);
+    glGenBuffers(1, &svbo);
+    glBindBuffer(GL_ARRAY_BUFFER, svbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(cap * 4 * sizeof(float)), NULL,
+                 GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (GLsizei)(4 * sizeof(float)),
+                          (const void *)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, (GLsizei)(4 * sizeof(float)),
+                          (const void *)(3 * sizeof(float)));
 
     printf("brine %s: %zu particles, GL %s\n", brine_version(), cap,
            (const char *)glGetString(GL_VERSION));
@@ -575,6 +641,22 @@ int main(int argc, char **argv)
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferSubData(GL_ARRAY_BUFFER, 0,
                         (GLsizeiptr)(cap * 3 * sizeof(float)), vertex);
+
+        {
+            size_t sc = brine_secondary_count(b);
+            const float *sp = brine_secondary_positions(b);
+            const unsigned char *st = brine_secondary_types(b);
+            size_t k;
+            for (k = 0; k < sc; k++) {
+                svertex[k * 4 + 0] = sp[k * 3 + 0];
+                svertex[k * 4 + 1] = sp[k * 3 + 1];
+                svertex[k * 4 + 2] = sp[k * 3 + 2];
+                svertex[k * 4 + 3] = (float)st[k];
+            }
+            glBindBuffer(GL_ARRAY_BUFFER, svbo);
+            glBufferSubData(GL_ARRAY_BUFFER, 0,
+                            (GLsizeiptr)(sc * 4 * sizeof(float)), svertex);
+        }
 
         glfwGetFramebufferSize(win, &wpx, &hpx);
         if (wpx < 1) {
@@ -630,6 +712,28 @@ int main(int argc, char **argv)
             glUniform1f(l_px, px_per_unit);
             glBindVertexArray(vao);
             glDrawArrays(GL_POINTS, 0, (GLsizei)cap);
+        }
+
+        {
+            size_t sc = brine_secondary_count(b);
+            GLint l_view;
+            GLint l_proj;
+            GLint l_radius;
+            GLint l_px;
+
+            if (sc > 0) {
+                glUseProgram(prog_foam);
+                l_view = glGetUniformLocation(prog_foam, "uView");
+                l_proj = glGetUniformLocation(prog_foam, "uProj");
+                l_radius = glGetUniformLocation(prog_foam, "uRadius");
+                l_px = glGetUniformLocation(prog_foam, "uPxPerUnit");
+                glUniformMatrix4fv(l_view, 1, GL_FALSE, view);
+                glUniformMatrix4fv(l_proj, 1, GL_FALSE, proj);
+                glUniform1f(l_radius, spacing * FOAM_SPLAT);
+                glUniform1f(l_px, (float)fh / (2.0f * tanf(fovy * 0.5f)));
+                glBindVertexArray(svao);
+                glDrawArrays(GL_POINTS, 0, (GLsizei)sc);
+            }
         }
 
         {
@@ -706,9 +810,13 @@ int main(int argc, char **argv)
     }
     glDeleteBuffers(1, &vbo);
     glDeleteVertexArrays(1, &vao);
+    glDeleteBuffers(1, &svbo);
+    glDeleteVertexArrays(1, &svao);
     glDeleteProgram(prog_depth);
+    glDeleteProgram(prog_foam);
     glDeleteProgram(prog_comp);
     free(vertex);
+    free(svertex);
     brine_free(b);
     glfwDestroyWindow(win);
     glfwTerminate();

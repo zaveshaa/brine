@@ -78,6 +78,37 @@ int main(void)
 
     CHECK(strcmp(brine_version(), BRINE_VERSION) == 0, "version string matches");
 
+    {
+        BrineParams q = brine_default_params();
+        Brine *c;
+        Brine *d;
+        size_t nc;
+        const float *sp;
+
+        q.secondary = 1;
+        c = brine_new(&q);
+        d = brine_new(&q);
+        brine_emit_box(c, lo, hi, 0.08f);
+        brine_emit_box(d, lo, hi, 0.08f);
+        for (step = 0; step < 400; step++) {
+            brine_step(c, 1.0f / 120.0f);
+            brine_step(d, 1.0f / 120.0f);
+        }
+        nc = brine_secondary_count(c);
+        CHECK(nc > 0, "secondary particles are generated");
+        CHECK(nc <= brine_count(c), "secondary count stays within budget");
+        sp = brine_secondary_positions(c);
+        for (i = 0; i < nc * 3; i++) {
+            CHECK(!isnan(sp[i]), "no NaN in secondary positions");
+        }
+        CHECK(brine_secondary_count(d) == nc,
+              "secondary count is deterministic");
+        CHECK(same(sp, brine_secondary_positions(d), nc * 3),
+              "secondaries stay bit-identical (deterministic)");
+        brine_free(c);
+        brine_free(d);
+    }
+
     brine_free(a);
     brine_free(b);
 

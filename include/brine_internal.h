@@ -19,6 +19,7 @@ typedef struct {
     float vorticity;
     float spacing;
     int iterations;
+    int secondary;
     Vec3 bmin;
     Vec3 bmax;
 } Settings;
@@ -45,6 +46,7 @@ struct Brine {
     float inv_rho0;
     float corr_dq;
     float cohesion_coef;
+    int neigh_ref;
     int gx;
     int gy;
     int gz;
@@ -57,6 +59,14 @@ struct Brine {
     int *order;
     int cell_cap;
     int order_cap;
+
+    Vec3 *spos;
+    Vec3 *svel;
+    float *sage;
+    unsigned char *stype;
+    size_t scount;
+    size_t scap;
+    unsigned int rng;
 };
 
 int brine_reserve(Brine *b, size_t n);
@@ -72,5 +82,9 @@ void kernel_cohesion(Brine *b, float dt);
 void kernel_vorticity(Brine *b, float dt);
 
 void bounds_apply(Brine *b);
+
+int foam_reserve(Brine *b, size_t n);
+void foam_emit(Brine *b, float dt);
+void foam_advance(Brine *b, float dt);
 
 #endif

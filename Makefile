@@ -8,7 +8,7 @@ ifeq ($(WERROR),1)
 WARN     += -Werror
 endif
 
-CORE      = src/brine.c src/grid.c src/kernel.c src/bounds.c
+CORE      = src/brine.c src/grid.c src/kernel.c src/bounds.c src/foam.c
 HDR       = $(wildcard include/*.h)
 
 DROP      ?= drop

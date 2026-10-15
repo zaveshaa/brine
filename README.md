@@ -97,16 +97,22 @@ pass. `brine_density_at` samples the density field at an arbitrary point, which
 is what a ray tracer wants: march the ray and take the first place the density
 turns to water, and you have a surface without any marching cubes.
 
+Set `secondary` in the parameters and the solver also sheds spray and foam at
+the surface. `brine_secondary_count`, `brine_secondary_positions`,
+`brine_secondary_ages` and `brine_secondary_types` read those back; they come
+as the same packed `x y z` layout as the fluid, plus a type per particle.
+
 ## Watching it move
 
 `make run-gl` opens a window and drops around a thousand particles into a small
 tub. Drag with the left mouse button to orbit, scroll to zoom, press space to
 pause and `r` to reset the view. The water is drawn with screen-space fluid
-rendering: a depth pass of point sprites, a bilateral blur to turn the point
-cloud into one smooth surface, then a composite that refracts and reflects the
-tub behind it, adds foam where the water moves, and ripples the surface. Set
-`BRINE_DUMP=out.ppm` to write a single frame and exit (with
-`BRINE_DUMP_FRAME=N` to pick the frame), which is handy for grabbing a still.
+rendering: every particle splats into one shared density field, the surface is
+taken at an isolevel, and the normals come from the field's gradient. A
+composite then refracts and reflects the tub behind it, ripples the surface,
+and lays the spray and foam on top. Set `BRINE_DUMP=out.ppm` to write a single
+frame and exit (with `BRINE_DUMP_FRAME=N` to pick the frame), which is handy for
+grabbing a still.
 
 The terminal demo `make run` draws the same solver as ASCII and needs no
 window at all.

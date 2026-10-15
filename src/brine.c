@@ -21,6 +21,7 @@ BrineParams brine_default_params(void)
     p.surface_tension = 0.1f;
     p.vorticity = 0.1f;
     p.iterations = 4;
+    p.secondary = 0;
     for (i = 0; i < 3; i++) {
         p.bounds_min[i] = -1.0f;
         p.bounds_max[i] = 1.0f;
@@ -52,6 +53,8 @@ Brine *brine_new(const BrineParams *p)
     b->s.vorticity = d.vorticity;
     b->s.spacing = 0.0f;
     b->s.iterations = (d.iterations > 0) ? d.iterations : 1;
+    b->s.secondary = (d.secondary != 0) ? 1 : 0;
+    b->rng = 0x9e3779b9u;
     b->s.bmin = v3(d.bounds_min[0], d.bounds_min[1], d.bounds_min[2]);
     b->s.bmax = v3(d.bounds_max[0], d.bounds_max[1], d.bounds_max[2]);
     kernel_constants(b);
@@ -76,12 +79,17 @@ void brine_free(Brine *b)
     free(b->cursor);
     free(b->cell_of);
     free(b->order);
+    free(b->spos);
+    free(b->svel);
+    free(b->sage);
+    free(b->stype);
     free(b);
 }
 
 void brine_clear(Brine *b)
 {
     b->count = 0;
+    b->scount = 0;
 }
 
 int brine_reserve(Brine *b, size_t n)
@@ -151,6 +159,29 @@ int brine_emit_box(Brine *b, const float lo[3], const float hi[3], float spacing
         b->s.mass = b->s.rest_density * spacing * spacing * spacing;
     }
     b->s.spacing = spacing;
+    {
+        int R = (int)(b->s.h / spacing) + 2;
+        float h2 = b->s.h * b->s.h;
+        int ref = 0;
+        int dx;
+        int dy;
+        int dz;
+        for (dz = -R; dz <= R; dz++) {
+            for (dy = -R; dy <= R; dy++) {
+                for (dx = -R; dx <= R; dx++) {
+                    float d2;
+                    if (dx == 0 && dy == 0 && dz == 0) {
+                        continue;
+                    }
+                    d2 = (float)(dx * dx + dy * dy + dz * dz) * spacing * spacing;
+                    if (d2 < h2) {
+                        ref++;
+                    }
+                }
+            }
+        }
+        b->neigh_ref = (ref > 0) ? ref : 1;
+    }
     for (ix = 0; ix < 3; ix++) {
         ext[ix] = hi[ix] - lo[ix];
         if (ext[ix] <= 0.0f) {
@@ -244,6 +275,11 @@ void brine_step(Brine *b, float dt)
     for (i = 0; i < b->count; i++) {
         b->pos[i] = b->pred[i];
     }
+
+    if (b->s.secondary) {
+        foam_emit(b, dt);
+        foam_advance(b, dt);
+    }
 }
 
 size_t brine_count(const Brine *b)
@@ -292,4 +328,24 @@ float brine_density_at(const Brine *b, const float p[3])
         }
     }
     return density;
+}
+
+size_t brine_secondary_count(const Brine *b)
+{
+    return b->scount;
+}
+
+const float *brine_secondary_positions(const Brine *b)
+{
+    return (const float *)b->spos;
+}
+
+const float *brine_secondary_ages(const Brine *b)
+{
+    return b->sage;
+}
+
+const unsigned char *brine_secondary_types(const Brine *b)
+{
+    return b->stype;
 }

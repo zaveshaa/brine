@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.0 - 2026-10-15
+
+- Secondary spray and foam particles (Ihmsen et al. 2012): surface particles
+  with too few neighbours are shed as spray when fast and foam when slow,
+  advected by the nearby fluid, and aged out.
+- `secondary` parameter, `brine_secondary_count`, `brine_secondary_positions`,
+  `brine_secondary_ages`, `brine_secondary_types`.
+- The GL demo splats spray and foam into the field's third and fourth channels
+  and composites them over the water.
+
 ## 2.0.0 - 2026-10-15
 
 - Metaball screen-space renderer: particles splat one shared density field,

@@ -49,13 +49,11 @@ typedef unsigned char GLboolean;
 #define GL_LINEAR 0x2601
 #define GL_CLAMP_TO_EDGE 0x812F
 #define GL_RED 0x1903
-#define GL_RG 0x8227
 #define GL_RGB 0x1907
 #define GL_RGBA 0x1908
 #define GL_RGBA16F 0x881A
 #define GL_RGBA32F 0x8814
 #define GL_R32F 0x822E
-#define GL_RG32F 0x8230
 #define GL_ONE 0x0001
 #define GL_DEPTH_COMPONENT 0x1902
 #define GL_DEPTH_COMPONENT24 0x81A6

@@ -4,9 +4,9 @@
 #include <stddef.h>
 
 #define BRINE_VERSION_MAJOR 2
-#define BRINE_VERSION_MINOR 0
+#define BRINE_VERSION_MINOR 1
 #define BRINE_VERSION_PATCH 0
-#define BRINE_VERSION "2.0.0"
+#define BRINE_VERSION "2.1.0"
 
 typedef struct Brine Brine;
 
@@ -22,9 +22,15 @@ typedef struct {
     float surface_tension;
     float vorticity;
     int iterations;
+    int secondary;
     float bounds_min[3];
     float bounds_max[3];
 } BrineParams;
+
+typedef enum {
+    BRINE_SPRAY = 0,
+    BRINE_FOAM = 1
+} BrineSecondaryType;
 
 BrineParams brine_default_params(void);
 
@@ -44,5 +50,10 @@ const float *brine_velocities(const Brine *b);
 
 float brine_density(const Brine *b, size_t i);
 float brine_density_at(const Brine *b, const float p[3]);
+
+size_t brine_secondary_count(const Brine *b);
+const float *brine_secondary_positions(const Brine *b);
+const float *brine_secondary_ages(const Brine *b);
+const unsigned char *brine_secondary_types(const Brine *b);
 
 #endif
