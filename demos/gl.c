@@ -19,7 +19,7 @@
 #define ZMAX (0.35f)
 
 #define FAR_DEPTH 1.0e6f
-#define SPLAT 0.95f
+#define SPLAT 1.0f
 
 #define X(ret, name, params) PFN_##name name;
 BRINE_GL_FUNCTIONS
@@ -737,14 +737,14 @@ int main(int argc, char **argv)
             glUniform1i(l_tex, 0);
             glUniform2f(l_res, (float)fw, (float)fh);
 
-            ss = rad_px * 1.0f;
+            ss = rad_px * 1.6f;
             steppx = 3.0f * ss / 16.0f;
             glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
             glViewport(0, 0, fw, fh);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, depthT.color);
             glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 3.0f);
+            glUniform1f(l_sr, spacing * 16.0f);
             glUniform2f(l_step, steppx / (float)fw, 0.0f);
             glBindVertexArray(vao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -755,13 +755,13 @@ int main(int argc, char **argv)
             glUniform2f(l_step, 0.0f, steppx / (float)fh);
             glDrawArrays(GL_TRIANGLES, 0, 3);
 
-            ss = rad_px * 2.5f;
+            ss = rad_px * 4.0f;
             steppx = 3.0f * ss / 16.0f;
             glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, blurB.color);
             glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 8.0f);
+            glUniform1f(l_sr, spacing * 30.0f);
             glUniform2f(l_step, steppx / (float)fw, 0.0f);
             glBindVertexArray(vao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -772,13 +772,13 @@ int main(int argc, char **argv)
             glUniform2f(l_step, 0.0f, steppx / (float)fh);
             glDrawArrays(GL_TRIANGLES, 0, 3);
 
-            ss = rad_px * 5.5f;
+            ss = rad_px * 8.0f;
             steppx = 3.0f * ss / 16.0f;
             glBindFramebuffer(GL_FRAMEBUFFER, blurA.fbo);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, blurB.color);
             glUniform1f(l_ss, ss);
-            glUniform1f(l_sr, spacing * 12.0f);
+            glUniform1f(l_sr, spacing * 40.0f);
             glUniform2f(l_step, steppx / (float)fw, 0.0f);
             glDrawArrays(GL_TRIANGLES, 0, 3);
 
