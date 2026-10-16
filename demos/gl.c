@@ -19,6 +19,9 @@
 #define SPLAT 1.6f
 #define FOAM_SPLAT 0.9f
 
+static float mouse_force[3] = {0.0f, 0.0f, 0.0f};
+static int mouse_down = 0;
+
 #define X(ret, name, params) PFN_##name name;
 BRINE_GL_FUNCTIONS
 #undef X
@@ -404,9 +407,12 @@ static void mouse_button(GLFWwindow *w, int button, int action, int mods)
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
             cam->drag = 1;
+            mouse_down = 1;
             glfwGetCursorPos(w, &cam->lx, &cam->ly);
         } else if (action == GLFW_RELEASE) {
             cam->drag = 0;
+            mouse_down = 0;
+            mouse_force[0] = mouse_force[1] = mouse_force[2] = 0.0f;
         }
     }
 }

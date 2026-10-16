@@ -51,6 +51,9 @@ const float *brine_velocities(const Brine *b);
 float brine_density(const Brine *b, size_t i);
 float brine_density_at(const Brine *b, const float p[3]);
 
+void brine_apply_force(Brine *b, float dt, const float p[3], float r,
+                      const float f[3]);
+
 size_t brine_secondary_count(const Brine *b);
 const float *brine_secondary_positions(const Brine *b);
 const float *brine_secondary_ages(const Brine *b);

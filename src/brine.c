@@ -330,6 +330,34 @@ float brine_density_at(const Brine *b, const float p[3])
     return density;
 }
 
+void brine_apply_force_local(Brine *b, float dt, const Vec3 p, float r,
+                            const Vec3 f)
+{
+    size_t i;
+    float rmax = r * r;
+
+    if (r <= 0.0f) {
+        return;
+    }
+    for (i = 0; i < b->count; i++) {
+        Vec3 dp = v3_sub(b->pos[i], p);
+        float dist2 = v3_dot(dp, dp);
+        if (dist2 < rmax) {
+            float t = 1.0f - dist2 / rmax;
+            b->vel[i] = v3_add(b->vel[i], v3_mul(f, dt * t));
+        }
+    }
+}
+
+void brine_apply_force(Brine *b, float dt, const float p[3], float r,
+                      const float f[3])
+{
+    Vec3 vp = v3(p[0], p[1], p[2]);
+    Vec3 vf = v3(f[0], f[1], f[2]);
+
+    brine_apply_force_local(b, dt, vp, r, vf);
+}
+
 size_t brine_secondary_count(const Brine *b)
 {
     return b->scount;
