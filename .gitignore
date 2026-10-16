@@ -1,6 +1,9 @@
 drop
 brine_gl
 brine_test
+tools/golden
+brine.gif
 *.o
 *.a
 *.ppm
+!tests/golden.ppm

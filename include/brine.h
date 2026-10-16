@@ -4,9 +4,9 @@
 #include <stddef.h>
 
 #define BRINE_VERSION_MAJOR 2
-#define BRINE_VERSION_MINOR 2
+#define BRINE_VERSION_MINOR 3
 #define BRINE_VERSION_PATCH 0
-#define BRINE_VERSION "2.2.0"
+#define BRINE_VERSION "2.3.0"
 
 typedef struct Brine Brine;
 

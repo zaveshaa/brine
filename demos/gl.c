@@ -19,6 +19,23 @@
 #define SPLAT 1.6f
 #define FOAM_GAIN 0.35f
 
+#define WHEEL_X 0.0f
+#define WHEEL_Y 0.12f
+#define WHEEL_Z 0.0f
+#define WHEEL_R 0.13f
+#define WHEEL_HUB 0.018f
+#define WHEEL_BLADES 6
+#define WHEEL_RB (WHEEL_R * 0.90f)
+#define WHEEL_BR 0.05f
+#define WHEEL_DRAG 3.0f
+#define WHEEL_INERTIA 0.03f
+#define WHEEL_BEARING 0.75f
+#define WHEEL_OMAX 9.0f
+#define MILL_FORCE 1.3f
+
+static float wheel_theta = 0.0f;
+static float wheel_omega = 0.0f;
+
 static float mouse_force[3] = {0.0f, 0.0f, 0.0f};
 static int mouse_down = 0;
 
@@ -96,6 +113,11 @@ static const char *FS_COMP_A =
     "uniform float uTime;\n"
     "uniform vec3 uBmin;\n"
     "uniform vec3 uBmax;\n"
+    "uniform vec3 uWheelC;\n"
+    "uniform float uWheelR;\n"
+    "uniform float uWheelHub;\n"
+    "uniform float uWheelBlades;\n"
+    "uniform float uWheelTheta;\n"
     "const float MB_THRESH = 0.5;\n"
     "float hash(vec2 p){\n"
     "  p = fract(p * vec2(123.34, 456.21));\n"
@@ -112,14 +134,44 @@ static const char *FS_COMP_A =
     "  float d = hash(i + vec2(1.0, 1.0));\n"
     "  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);\n"
     "}\n"
+    "int wheelHit(vec3 o, vec3 d, out vec3 wc){\n"
+    "  if (abs(d.z) < 1.0e-6) return 0;\n"
+    "  float t = (uWheelC.z - o.z) / d.z;\n"
+    "  if (t <= 0.0) return 0;\n"
+    "  vec3 p = o + d * t;\n"
+    "  float dx = p.x - uWheelC.x;\n"
+    "  float dy = p.y - uWheelC.y;\n"
+    "  float r = sqrt(dx * dx + dy * dy);\n"
+    "  if (r > uWheelR) return 0;\n"
+    "  float a = atan(dy, dx) - uWheelTheta;\n"
+    "  float seg = 6.2831853 / uWheelBlades;\n"
+    "  float fa = mod(a, seg);\n"
+    "  float da = min(fa, seg - fa);\n"
+    "  float blade = step(da, seg * 0.15);\n"
+    "  float rim = step(uWheelR - 0.016, r);\n"
+    "  float hub = step(r, uWheelHub);\n"
+    "  if (max(blade, max(rim, hub)) < 0.5) return 0;\n"
+    "  float lam = 0.5 + 0.5 * max(dot(vec3(0.0, 0.0, 1.0), normalize(uSunDir)), 0.0);\n"
+    "  vec3 base = vec3(0.44, 0.30, 0.19) * lam;\n"
+    "  base = mix(base, vec3(0.28, 0.18, 0.12), smoothstep(0.86, 1.0, r / uWheelR));\n"
+    "  base = mix(base, vec3(0.34, 0.35, 0.37), hub);\n"
+    "  wc = base;\n"
+    "  return 1;\n"
+    "}\n";
+
+static const char *FS_COMP_A2 =
     "vec3 skyColor(vec3 d){\n"
     "  float y = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);\n"
     "  vec3 horizon = vec3(0.78, 0.85, 0.95);\n"
     "  vec3 zenith  = vec3(0.16, 0.34, 0.72);\n"
     "  vec3 c = mix(horizon, zenith, pow(y, 0.85));\n"
-    "  float s = max(dot(d, normalize(uSunDir)), 0.0);\n"
-    "  c += vec3(1.0, 0.95, 0.82) * pow(s, 400.0) * 3.0;\n"
-    "  c += vec3(1.0, 0.93, 0.78) * pow(s, 8.0) * 0.25;\n"
+    "  vec3 sd = normalize(uSunDir);\n"
+    "  float s = max(dot(d, sd), 0.0);\n"
+    "  float disc = smoothstep(0.9994, 0.9998, s);\n"
+    "  float glow = pow(s, 800.0) * 1.6 + pow(s, 40.0) * 0.35;\n"
+    "  c += vec3(1.0, 0.97, 0.88) * disc * 8.0;\n"
+    "  c += vec3(1.0, 0.95, 0.85) * glow;\n"
+    "  c += vec3(1.0, 0.93, 0.78) * pow(s, 8.0) * 0.2;\n"
     "  return c;\n"
     "}\n"
     "vec3 tubShade(vec3 p, int face){\n"
@@ -134,6 +186,8 @@ static const char *FS_COMP_A =
     "  return col;\n"
     "}\n"
     "vec3 sceneColor(vec3 o, vec3 d){\n"
+    "  vec3 wcol;\n"
+    "  if (wheelHit(o, d, wcol) == 1) return wcol;\n"
     "  float tb = 1.0e30;\n"
     "  int face = -1;\n"
     "  if (d.y < -1.0e-6) {\n"
@@ -458,7 +512,7 @@ static void key(GLFWwindow *w, int k, int sc, int action, int mods)
         cam->paused = !cam->paused;
     } else if (k == GLFW_KEY_R) {
         cam->yaw = 0.45f;
-        cam->pitch = 0.62f;
+        cam->pitch = 0.22f;
         cam->dist = 2.4f;
     }
 }
@@ -484,6 +538,81 @@ static void dump_ppm(const char *path, int w, int h)
     free(buf);
 }
 
+static void wheel_update(Brine *b, float dt)
+{
+    const float *pos = brine_positions(b);
+    const float *vel = brine_velocities(b);
+    size_t n = brine_count(b);
+    float seg = (float)(2.0 * 3.14159265358979323846) / (float)WHEEL_BLADES;
+    float torque = 0.0f;
+    int k;
+    size_t i;
+    float mill_p[3];
+    float mill_f[3];
+
+    mill_p[0] = 0.0f;
+    mill_p[1] = 0.10f;
+    mill_p[2] = 0.0f;
+    mill_f[0] = MILL_FORCE;
+    mill_f[1] = 0.0f;
+    mill_f[2] = 0.0f;
+    brine_apply_force(b, dt, mill_p, 2.5f, mill_f);
+
+    for (k = 0; k < WHEEL_BLADES; k++) {
+        float ang = wheel_theta + seg * (float)k;
+        float ca = cosf(ang);
+        float sa = sinf(ang);
+        float bx = WHEEL_X + WHEEL_RB * ca;
+        float by = WHEEL_Y + WHEEL_RB * sa;
+        float sumx = 0.0f;
+        float sumy = 0.0f;
+        float wsum = 0.0f;
+
+        for (i = 0; i < n; i++) {
+            float dx = pos[i * 3 + 0] - bx;
+            float dy = pos[i * 3 + 1] - by;
+            float dz = pos[i * 3 + 2] - WHEEL_Z;
+            float d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 < WHEEL_BR * WHEEL_BR) {
+                float t = 1.0f - d2 / (WHEEL_BR * WHEEL_BR);
+                sumx += vel[i * 3 + 0] * t;
+                sumy += vel[i * 3 + 1] * t;
+                wsum += t;
+            }
+        }
+        if (wsum > 1.0e-3f) {
+            float tang = (sumx / wsum) * (-sa) + (sumy / wsum) * ca;
+            torque += tang * WHEEL_RB * wsum;
+        }
+    }
+
+    wheel_omega += torque * dt / WHEEL_INERTIA;
+    wheel_omega *= expf(-dt * WHEEL_BEARING);
+    if (wheel_omega > WHEEL_OMAX) {
+        wheel_omega = WHEEL_OMAX;
+    }
+    if (wheel_omega < -WHEEL_OMAX) {
+        wheel_omega = -WHEEL_OMAX;
+    }
+    wheel_theta += wheel_omega * dt;
+
+    for (k = 0; k < WHEEL_BLADES; k++) {
+        float ang = wheel_theta + seg * (float)k;
+        float ca = cosf(ang);
+        float sa = sinf(ang);
+        float bp[3];
+        float bf[3];
+
+        bp[0] = WHEEL_X + WHEEL_RB * ca;
+        bp[1] = WHEEL_Y + WHEEL_RB * sa;
+        bp[2] = WHEEL_Z;
+        bf[0] = WHEEL_DRAG * (-sa * wheel_omega * WHEEL_RB);
+        bf[1] = WHEEL_DRAG * (ca * wheel_omega * WHEEL_RB);
+        bf[2] = 0.0f;
+        brine_apply_force(b, dt, bp, WHEEL_BR, bf);
+    }
+}
+
 
 int main(int argc, char **argv)
 {
@@ -494,11 +623,11 @@ int main(int argc, char **argv)
     const char *dumpf = getenv("BRINE_DUMP_FRAME");
     long dump_at = (dumpf != NULL) ? atol(dumpf) : 240;
     long total = 0;
-    Camera cam = {0.45f, 0.62f, 2.4f, 0.0, 0.0, 0, 0};
+    Camera cam = {0.45f, 0.22f, 2.4f, 0.0, 0.0, 0, 0};
     float spacing = (argc > 1) ? (float)atof(argv[1]) : 0.055f;
     float lo[3] = {-0.85f, 0.03f, -0.30f};
     float hi[3] = {0.85f, 0.28f, 0.30f};
-    const float sun[3] = {-0.5f, 0.75f, 0.4f};
+    const float sun[3] = {-0.42f, 0.26f, -0.87f};
     GLuint vao = 0;
     GLuint vbo = 0;
     GLuint prog_depth;
@@ -513,7 +642,36 @@ int main(int argc, char **argv)
     int frames = 0;
     int fw = 0;
     int fh = 0;
+    float rscale = 1.0f;
+    int field_w = 0;
+    int field_h = 0;
+    const char *gif = getenv("BRINE_GIF");
+    const char *gif_every_s = getenv("BRINE_GIF_EVERY");
+    const char *gif_max_s = getenv("BRINE_GIF_MAX");
+    long gif_every = (gif_every_s != NULL) ? atol(gif_every_s) : 2;
+    long gif_max = (gif_max_s != NULL) ? atol(gif_max_s) : 90;
+    long gif_count = 0;
+    const char *win_s = getenv("BRINE_WINDOW");
+    int win_w = 1200;
+    int win_h = 760;
+    const char *steps_s = getenv("BRINE_STEPS");
+    int fixed_steps = 0;
     const char *missing;
+
+    if (steps_s != NULL) {
+        fixed_steps = atoi(steps_s);
+    }
+    if (fixed_steps <= 0 && (dump != NULL || gif != NULL)) {
+        fixed_steps = 4;
+    }
+    if (win_s != NULL) {
+        int wv = 0;
+        int hv = 0;
+        if (sscanf(win_s, "%dx%d", &wv, &hv) == 2 && wv > 0 && hv > 0) {
+            win_w = wv;
+            win_h = hv;
+        }
+    }
 
     p.bounds_min[0] = XMIN;
     p.bounds_max[0] = XMAX;
@@ -543,7 +701,7 @@ int main(int argc, char **argv)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
-    win = glfwCreateWindow(1200, 760, "brine", NULL, NULL);
+    win = glfwCreateWindow(win_w, win_h, "brine", NULL, NULL);
     if (win == NULL) {
         fprintf(stderr, "brine: could not create a GL 3.3 window\n");
         glfwTerminate();
@@ -566,10 +724,11 @@ int main(int argc, char **argv)
 
     prog_depth = program(VS_DEPTH, &FS_DEPTH, 1);
     {
-        const char *comp[2];
+        const char *comp[3];
         comp[0] = FS_COMP_A;
-        comp[1] = FS_COMP_B;
-        prog_comp = program(VS_QUAD, comp, 2);
+        comp[1] = FS_COMP_A2;
+        comp[2] = FS_COMP_B;
+        prog_comp = program(VS_QUAD, comp, 3);
     }
 
     vertex = (float *)malloc(cap * 4 * sizeof(float) + 16);
@@ -601,7 +760,6 @@ int main(int argc, char **argv)
         double frame = now - prev;
         const float *pos;
         const float *vel;
-        size_t i;
         int wpx;
         int hpx;
         float proj[16];
@@ -619,28 +777,43 @@ int main(int argc, char **argv)
         acc += frame;
 
         if (!cam.paused) {
-            int sub = 0;
-            while (acc >= dt && sub < 8) {
-                brine_step(b, (float)dt);
-                acc -= dt;
-                sub++;
-            }
-            if (acc > 4.0 * dt) {
-                acc = 0.0;
+            if (fixed_steps > 0) {
+                int s;
+                for (s = 0; s < fixed_steps; s++) {
+                    brine_step(b, (float)dt);
+                    wheel_update(b, (float)dt);
+                }
+            } else {
+                int sub = 0;
+                while (acc >= dt && sub < 8) {
+                    brine_step(b, (float)dt);
+                    wheel_update(b, (float)dt);
+                    acc -= dt;
+                    sub++;
+                }
+                if (acc > 4.0 * dt) {
+                    acc = 0.0;
+                }
             }
         }
 
         pos = brine_positions(b);
         vel = brine_velocities(b);
-        for (i = 0; i < cap; i++) {
-            float vx = vel[i * 3 + 0];
-            float vy = vel[i * 3 + 1];
-            float vz = vel[i * 3 + 2];
-            float sp2 = vx * vx + vy * vy + vz * vz;
-            vertex[i * 4 + 0] = pos[i * 3 + 0];
-            vertex[i * 4 + 1] = pos[i * 3 + 1];
-            vertex[i * 4 + 2] = pos[i * 3 + 2];
-            vertex[i * 4 + 3] = sp2 * FOAM_GAIN;
+        {
+            long vi;
+            long vcap = (long)cap;
+#pragma omp parallel for schedule(static)
+            for (vi = 0; vi < vcap; vi++) {
+                size_t i = (size_t)vi;
+                float vx = vel[i * 3 + 0];
+                float vy = vel[i * 3 + 1];
+                float vz = vel[i * 3 + 2];
+                float sp2 = vx * vx + vy * vy + vz * vz;
+                vertex[i * 4 + 0] = pos[i * 3 + 0];
+                vertex[i * 4 + 1] = pos[i * 3 + 1];
+                vertex[i * 4 + 2] = pos[i * 3 + 2];
+                vertex[i * 4 + 3] = sp2 * FOAM_GAIN;
+            }
         }
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferSubData(GL_ARRAY_BUFFER, 0,
@@ -656,12 +829,26 @@ int main(int argc, char **argv)
         if (wpx != fw || hpx != fh) {
             fw = wpx;
             fh = hpx;
-            if (fieldT.fbo != 0) {
-                free_target(&fieldT);
+        }
+        {
+            int rw = (int)((float)fw * rscale);
+            int rh = (int)((float)fh * rscale);
+            if (rw < 8) {
+                rw = 8;
             }
-            if (make_target(&fieldT, fw, fh) != 0) {
-                fprintf(stderr, "brine: incomplete framebuffer\n");
-                return 1;
+            if (rh < 8) {
+                rh = 8;
+            }
+            if (rw != field_w || rh != field_h) {
+                field_w = rw;
+                field_h = rh;
+                if (fieldT.fbo != 0) {
+                    free_target(&fieldT);
+                }
+                if (make_target(&fieldT, field_w, field_h) != 0) {
+                    fprintf(stderr, "brine: incomplete framebuffer\n");
+                    return 1;
+                }
             }
         }
 
@@ -676,14 +863,14 @@ int main(int argc, char **argv)
         camera(view, inv, eye, ctr);
 
         {
-            float px_per_unit = (float)fh / (2.0f * tanf(fovy * 0.5f));
+            float px_per_unit = (float)field_h / (2.0f * tanf(fovy * 0.5f));
             GLint l_view;
             GLint l_proj;
             GLint l_radius;
             GLint l_px;
 
             glBindFramebuffer(GL_FRAMEBUFFER, fieldT.fbo);
-            glViewport(0, 0, fw, fh);
+            glViewport(0, 0, field_w, field_h);
             glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             glDisable(GL_DEPTH_TEST);
@@ -712,6 +899,11 @@ int main(int argc, char **argv)
             GLint l_time = glGetUniformLocation(prog_comp, "uTime");
             GLint l_bmin = glGetUniformLocation(prog_comp, "uBmin");
             GLint l_bmax = glGetUniformLocation(prog_comp, "uBmax");
+            GLint l_wheellc = glGetUniformLocation(prog_comp, "uWheelC");
+            GLint l_wheelr = glGetUniformLocation(prog_comp, "uWheelR");
+            GLint l_wheelhub = glGetUniformLocation(prog_comp, "uWheelHub");
+            GLint l_wheelblades = glGetUniformLocation(prog_comp, "uWheelBlades");
+            GLint l_wheeltheta = glGetUniformLocation(prog_comp, "uWheelTheta");
 
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, fw, fh);
@@ -729,6 +921,11 @@ int main(int argc, char **argv)
             glUniform1f(l_time, (float)now);
             glUniform3f(l_bmin, XMIN, YMIN, ZMIN);
             glUniform3f(l_bmax, XMAX, YMAX, ZMAX);
+            glUniform3f(l_wheellc, WHEEL_X, WHEEL_Y, WHEEL_Z);
+            glUniform1f(l_wheelr, WHEEL_R);
+            glUniform1f(l_wheelhub, WHEEL_HUB);
+            glUniform1f(l_wheelblades, (float)WHEEL_BLADES);
+            glUniform1f(l_wheeltheta, wheel_theta);
             glBindVertexArray(vao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
@@ -737,6 +934,16 @@ int main(int argc, char **argv)
         glfwPollEvents();
 
         total++;
+        if (gif != NULL && gif_every > 0 && (total % gif_every) == 0 &&
+            gif_count < gif_max) {
+            char gp[512];
+            snprintf(gp, sizeof gp, "%s_%04ld.ppm", gif, gif_count);
+            dump_ppm(gp, fw, fh);
+            gif_count++;
+            if (gif_count >= gif_max) {
+                break;
+            }
+        }
         if (dump != NULL && total >= dump_at) {
             const float *pp = brine_positions(b);
             float xmn = 1e9f, xmx = -1e9f, ymn = 1e9f, ymx = -1e9f;
@@ -766,6 +973,19 @@ int main(int argc, char **argv)
             snprintf(title, sizeof title, "brine: %zu particles, %d fps",
                      cap, f);
             glfwSetWindowTitle(win, title);
+            if (f > 0 && dump == NULL && gif == NULL) {
+                if (f < 40 && rscale > 0.55f) {
+                    rscale -= 0.15f;
+                    if (rscale < 0.5f) {
+                        rscale = 0.5f;
+                    }
+                } else if (f > 55 && rscale < 1.0f) {
+                    rscale += 0.1f;
+                    if (rscale > 1.0f) {
+                        rscale = 1.0f;
+                    }
+                }
+            }
             fps_t = now;
             frames = 0;
         }

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.3.0 - 2026-10-16
+
+- The GL demo gains a water wheel: a millrace current pushes a six-bladed wheel,
+  the fluid's tangential velocity at the blades spins it, and the blades push
+  back into the water through `brine_apply_force`, so the wheel and the fluid
+  drive each other.
+- A visible sun disc with a soft glow, and a lower default camera pitch that
+  keeps the sky in frame.
+- The field render scale now adapts to the measured frame rate (between 0.5 and
+  1.0), and the vertex buffer is filled with OpenMP when the demo is built with
+  it.
+- `make gif` records the GL demo to an animated GIF through ffmpeg; `make golden`
+  and `make golden-update` compare the render against `tests/golden.ppm` using
+  the new `tools/golden.c`.
+- Capture modes (`BRINE_DUMP`, `BRINE_GIF`) step a fixed number of substeps per
+  frame (`BRINE_STEPS`) and hold the field resolution fixed, so stills and clips
+  reproduce across runs. `BRINE_WINDOW=WxH` sets the window size.
+
 ## 2.2.0 - 2026-10-16
 
 - The GL demo now derives foam from particle motion (velocity) and composites it
