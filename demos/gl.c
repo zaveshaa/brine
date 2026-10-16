@@ -17,7 +17,7 @@
 #define ZMAX (0.35f)
 
 #define SPLAT 1.6f
-#define FOAM_SPLAT 0.9f
+#define FOAM_GAIN 0.35f
 
 static float mouse_force[3] = {0.0f, 0.0f, 0.0f};
 static int mouse_down = 0;
@@ -44,14 +44,17 @@ typedef struct {
 static const char *VS_DEPTH =
     "#version 330 core\n"
     "layout(location=0) in vec3 aPos;\n"
+    "layout(location=1) in float aFoam;\n"
     "uniform mat4 uView;\n"
     "uniform mat4 uProj;\n"
     "uniform float uRadius;\n"
     "uniform float uPxPerUnit;\n"
     "out vec3 vEye;\n"
+    "out float vFoam;\n"
     "void main(){\n"
     "  vec4 eye = uView * vec4(aPos, 1.0);\n"
     "  vEye = eye.xyz;\n"
+    "  vFoam = aFoam;\n"
     "  gl_Position = uProj * eye;\n"
     "  float dist = max(-eye.z, 0.001);\n"
     "  gl_PointSize = clamp(uPxPerUnit * uRadius / dist, 1.0, 256.0);\n"
@@ -60,6 +63,7 @@ static const char *VS_DEPTH =
 static const char *FS_DEPTH =
     "#version 330 core\n"
     "in vec3 vEye;\n"
+    "in float vFoam;\n"
     "out vec4 frag;\n"
     "void main(){\n"
     "  vec2 ndc = gl_PointCoord * 2.0 - 1.0;\n"
@@ -67,42 +71,7 @@ static const char *FS_DEPTH =
     "  if (d2 > 1.0) discard;\n"
     "  float w = 1.0 - d2;\n"
     "  w = w * w;\n"
-    "  frag = vec4(w, w * (-vEye.z), 0.0, 0.0);\n"
-    "}\n";
-
-static const char *VS_FOAM =
-    "#version 330 core\n"
-    "layout(location=0) in vec3 aPos;\n"
-    "layout(location=1) in float aType;\n"
-    "uniform mat4 uView;\n"
-    "uniform mat4 uProj;\n"
-    "uniform float uRadius;\n"
-    "uniform float uPxPerUnit;\n"
-    "out vec3 vEye;\n"
-    "out float vType;\n"
-    "void main(){\n"
-    "  vec4 eye = uView * vec4(aPos, 1.0);\n"
-    "  vEye = eye.xyz;\n"
-    "  vType = aType;\n"
-    "  gl_Position = uProj * eye;\n"
-    "  float dist = max(-eye.z, 0.001);\n"
-    "  gl_PointSize = clamp(uPxPerUnit * uRadius / dist, 1.0, 64.0);\n"
-    "}\n";
-
-static const char *FS_FOAM =
-    "#version 330 core\n"
-    "in vec3 vEye;\n"
-    "in float vType;\n"
-    "out vec4 frag;\n"
-    "void main(){\n"
-    "  vec2 ndc = gl_PointCoord * 2.0 - 1.0;\n"
-    "  float d2 = dot(ndc, ndc);\n"
-    "  if (d2 > 1.0) discard;\n"
-    "  float w = 1.0 - d2;\n"
-    "  w = w * w;\n"
-    "  float foam = vType > 0.5 ? w : 0.0;\n"
-    "  float spray = vType > 0.5 ? 0.0 : w;\n"
-    "  frag = vec4(0.0, 0.0, foam, spray);\n"
+    "  frag = vec4(w, w * (-vEye.z), w * vFoam, 0.0);\n"
     "}\n";
 
 static const char *VS_QUAD =
@@ -128,6 +97,21 @@ static const char *FS_COMP_A =
     "uniform vec3 uBmin;\n"
     "uniform vec3 uBmax;\n"
     "const float MB_THRESH = 0.5;\n"
+    "float hash(vec2 p){\n"
+    "  p = fract(p * vec2(123.34, 456.21));\n"
+    "  p += dot(p, p + 34.56);\n"
+    "  return fract(p.x * p.y);\n"
+    "}\n"
+    "float vnoise(vec2 p){\n"
+    "  vec2 i = floor(p);\n"
+    "  vec2 f = fract(p);\n"
+    "  f = f * f * (3.0 - 2.0 * f);\n"
+    "  float a = hash(i);\n"
+    "  float b = hash(i + vec2(1.0, 0.0));\n"
+    "  float c = hash(i + vec2(0.0, 1.0));\n"
+    "  float d = hash(i + vec2(1.0, 1.0));\n"
+    "  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);\n"
+    "}\n"
     "vec3 skyColor(vec3 d){\n"
     "  float y = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);\n"
     "  vec3 horizon = vec3(0.78, 0.85, 0.95);\n"
@@ -246,10 +230,25 @@ static const char *FS_COMP_B =
     "    float sp2 = pow(max(dot(R, normalize(uSunDir)), 0.0), 60.0);\n"
     "    col += vec3(0.90, 0.95, 1.0) * sp2 * 0.25;\n"
     "  }\n"
-    "  float covf = 1.0 - exp(-fld.b * 3.0);\n"
-    "  float covs = 1.0 - exp(-fld.a * 3.0);\n"
-    "  col = mix(col, vec3(0.95, 0.96, 0.98), clamp(covf, 0.0, 1.0));\n"
-    "  col = mix(col, vec3(0.80, 0.89, 1.0), clamp(covs, 0.0, 1.0) * 0.85);\n"
+    "  float fden = max(fld.r, 1e-4);\n"
+    "  float foam = fld.b / fden;\n"
+    "  vec3 fcol = vec3(0.0);\n"
+    "  if (foam > 0.001) {\n"
+    "    vec3 fP;\n"
+    "    if (field >= MB_THRESH) {\n"
+    "      fP = eyePos(vUV, fld.g / fld.r);\n"
+    "    } else {\n"
+    "      vec2 ndc2 = vUV * 2.0 - 1.0;\n"
+    "      fP = uCamPos + normalize((uInvView * vec4(ndc2.x / uProj[0][0], ndc2.y / uProj[1][1], -1.0, 0.0)).xyz);\n"
+    "    }\n"
+    "    float n1 = vnoise(fP.xz * 60.0 + uTime * 1.2);\n"
+    "    float n2 = vnoise(fP.xz * 140.0 - uTime * 2.3);\n"
+    "    float bub = n1 * 0.6 + n2 * 0.4;\n"
+    "    bub = smoothstep(0.25, 0.75, bub);\n"
+    "    float amt = clamp(foam * (0.5 + 0.5 * bub), 0.0, 1.0);\n"
+    "    fcol = mix(vec3(0.82, 0.87, 0.92), vec3(1.0), bub) * amt;\n"
+    "  }\n"
+    "  col = mix(col, fcol, clamp(foam * 1.2, 0.0, 1.0));\n"
     "  frag = vec4(col, 1.0);\n"
     "}\n";
 
@@ -502,14 +501,10 @@ int main(int argc, char **argv)
     const float sun[3] = {-0.5f, 0.75f, 0.4f};
     GLuint vao = 0;
     GLuint vbo = 0;
-    GLuint svao = 0;
-    GLuint svbo = 0;
     GLuint prog_depth;
-    GLuint prog_foam;
     GLuint prog_comp;
     Target fieldT = {0, 0};
     float *vertex;
-    float *svertex;
     size_t cap;
     double prev;
     double acc = 0.0;
@@ -531,7 +526,6 @@ int main(int argc, char **argv)
     p.damping = 0.005f;
     p.surface_tension = 0.00f;
     p.h = spacing * 1.5f;
-    p.secondary = 1;
 
     b = brine_new(&p);
     if (b == NULL) {
@@ -571,7 +565,6 @@ int main(int argc, char **argv)
     }
 
     prog_depth = program(VS_DEPTH, &FS_DEPTH, 1);
-    prog_foam = program(VS_FOAM, &FS_FOAM, 1);
     {
         const char *comp[2];
         comp[0] = FS_COMP_A;
@@ -579,13 +572,8 @@ int main(int argc, char **argv)
         prog_comp = program(VS_QUAD, comp, 2);
     }
 
-    vertex = (float *)malloc(cap * 3 * sizeof(float) + 16);
+    vertex = (float *)malloc(cap * 4 * sizeof(float) + 16);
     if (vertex == NULL) {
-        fprintf(stderr, "brine: out of memory\n");
-        return 1;
-    }
-    svertex = (float *)malloc(cap * 4 * sizeof(float) + 16);
-    if (svertex == NULL) {
         fprintf(stderr, "brine: out of memory\n");
         return 1;
     }
@@ -595,17 +583,6 @@ int main(int argc, char **argv)
     glEnable(GL_PROGRAM_POINT_SIZE);
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(cap * 3 * sizeof(float)), NULL,
-                 GL_DYNAMIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (GLsizei)(3 * sizeof(float)),
-                          (const void *)0);
-
-    glGenVertexArrays(1, &svao);
-    glBindVertexArray(svao);
-    glEnable(GL_PROGRAM_POINT_SIZE);
-    glGenBuffers(1, &svbo);
-    glBindBuffer(GL_ARRAY_BUFFER, svbo);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(cap * 4 * sizeof(float)), NULL,
                  GL_DYNAMIC_DRAW);
     glEnableVertexAttribArray(0);
@@ -623,6 +600,7 @@ int main(int argc, char **argv)
         double now = glfwGetTime();
         double frame = now - prev;
         const float *pos;
+        const float *vel;
         size_t i;
         int wpx;
         int hpx;
@@ -653,30 +631,20 @@ int main(int argc, char **argv)
         }
 
         pos = brine_positions(b);
+        vel = brine_velocities(b);
         for (i = 0; i < cap; i++) {
-            vertex[i * 3 + 0] = pos[i * 3 + 0];
-            vertex[i * 3 + 1] = pos[i * 3 + 1];
-            vertex[i * 3 + 2] = pos[i * 3 + 2];
+            float vx = vel[i * 3 + 0];
+            float vy = vel[i * 3 + 1];
+            float vz = vel[i * 3 + 2];
+            float sp2 = vx * vx + vy * vy + vz * vz;
+            vertex[i * 4 + 0] = pos[i * 3 + 0];
+            vertex[i * 4 + 1] = pos[i * 3 + 1];
+            vertex[i * 4 + 2] = pos[i * 3 + 2];
+            vertex[i * 4 + 3] = sp2 * FOAM_GAIN;
         }
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferSubData(GL_ARRAY_BUFFER, 0,
-                        (GLsizeiptr)(cap * 3 * sizeof(float)), vertex);
-
-        {
-            size_t sc = brine_secondary_count(b);
-            const float *sp = brine_secondary_positions(b);
-            const unsigned char *st = brine_secondary_types(b);
-            size_t k;
-            for (k = 0; k < sc; k++) {
-                svertex[k * 4 + 0] = sp[k * 3 + 0];
-                svertex[k * 4 + 1] = sp[k * 3 + 1];
-                svertex[k * 4 + 2] = sp[k * 3 + 2];
-                svertex[k * 4 + 3] = (float)st[k];
-            }
-            glBindBuffer(GL_ARRAY_BUFFER, svbo);
-            glBufferSubData(GL_ARRAY_BUFFER, 0,
-                            (GLsizeiptr)(sc * 4 * sizeof(float)), svertex);
-        }
+                        (GLsizeiptr)(cap * 4 * sizeof(float)), vertex);
 
         glfwGetFramebufferSize(win, &wpx, &hpx);
         if (wpx < 1) {
@@ -732,28 +700,6 @@ int main(int argc, char **argv)
             glUniform1f(l_px, px_per_unit);
             glBindVertexArray(vao);
             glDrawArrays(GL_POINTS, 0, (GLsizei)cap);
-        }
-
-        {
-            size_t sc = brine_secondary_count(b);
-            GLint l_view;
-            GLint l_proj;
-            GLint l_radius;
-            GLint l_px;
-
-            if (sc > 0) {
-                glUseProgram(prog_foam);
-                l_view = glGetUniformLocation(prog_foam, "uView");
-                l_proj = glGetUniformLocation(prog_foam, "uProj");
-                l_radius = glGetUniformLocation(prog_foam, "uRadius");
-                l_px = glGetUniformLocation(prog_foam, "uPxPerUnit");
-                glUniformMatrix4fv(l_view, 1, GL_FALSE, view);
-                glUniformMatrix4fv(l_proj, 1, GL_FALSE, proj);
-                glUniform1f(l_radius, spacing * FOAM_SPLAT);
-                glUniform1f(l_px, (float)fh / (2.0f * tanf(fovy * 0.5f)));
-                glBindVertexArray(svao);
-                glDrawArrays(GL_POINTS, 0, (GLsizei)sc);
-            }
         }
 
         {
@@ -830,13 +776,9 @@ int main(int argc, char **argv)
     }
     glDeleteBuffers(1, &vbo);
     glDeleteVertexArrays(1, &vao);
-    glDeleteBuffers(1, &svbo);
-    glDeleteVertexArrays(1, &svao);
     glDeleteProgram(prog_depth);
-    glDeleteProgram(prog_foam);
     glDeleteProgram(prog_comp);
     free(vertex);
-    free(svertex);
     brine_free(b);
     glfwDestroyWindow(win);
     glfwTerminate();

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.2.0 - 2026-10-16
+
+- The GL demo now derives foam from particle motion (velocity) and composites it
+  as an animated bubble-noise surface layer, instead of splatting the separate
+  secondary particles as discrete balls.
+- The per-particle foam weight is packed into the fourth vertex attribute and
+  accumulated in the field's blue channel during the metaball depth pass; the
+  composite pass normalises it by density and adds screen-space bubble texture.
+- The secondary-particle system remains available in the library
+  (`brine_secondary_*`), but is no longer enabled or drawn by the GL demo.
+
 ## 2.1.0 - 2026-10-15
 
 - Secondary spray and foam particles (Ihmsen et al. 2012): surface particles
