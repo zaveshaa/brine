@@ -1,5 +1,6 @@
 #include "brine_internal.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -143,6 +144,51 @@ int brine_reserve(Brine *b, size_t n)
     return 0;
 }
 
+static void set_spacing(Brine *b, float spacing)
+{
+    int R = (int)(b->s.h / spacing) + 2;
+    float h2 = b->s.h * b->s.h;
+    int ref = 0;
+    int dx;
+    int dy;
+    int dz;
+
+    if (b->s.mass <= 0.0f) {
+        b->s.mass = b->s.rest_density * spacing * spacing * spacing;
+    }
+    b->s.spacing = spacing;
+    for (dz = -R; dz <= R; dz++) {
+        for (dy = -R; dy <= R; dy++) {
+            for (dx = -R; dx <= R; dx++) {
+                float d2;
+                if (dx == 0 && dy == 0 && dz == 0) {
+                    continue;
+                }
+                d2 = (float)(dx * dx + dy * dy + dz * dz) * spacing * spacing;
+                if (d2 < h2) {
+                    ref++;
+                }
+            }
+        }
+    }
+    b->neigh_ref = (ref > 0) ? ref : 1;
+}
+
+static void push_particle(Brine *b, Vec3 q)
+{
+    size_t i = b->count;
+
+    b->pos[i] = q;
+    b->vel[i] = v3(0.0f, 0.0f, 0.0f);
+    b->pred[i] = q;
+    b->delta[i] = v3(0.0f, 0.0f, 0.0f);
+    b->omega[i] = v3(0.0f, 0.0f, 0.0f);
+    b->rho[i] = b->s.rest_density;
+    b->lambda[i] = 0.0f;
+    b->omega_mag[i] = 0.0f;
+    b->count++;
+}
+
 int brine_emit_box(Brine *b, const float lo[3], const float hi[3], float spacing)
 {
     float ext[3];
@@ -155,33 +201,7 @@ int brine_emit_box(Brine *b, const float lo[3], const float hi[3], float spacing
     if (spacing <= 0.0f) {
         return -1;
     }
-    if (b->s.mass <= 0.0f) {
-        b->s.mass = b->s.rest_density * spacing * spacing * spacing;
-    }
-    b->s.spacing = spacing;
-    {
-        int R = (int)(b->s.h / spacing) + 2;
-        float h2 = b->s.h * b->s.h;
-        int ref = 0;
-        int dx;
-        int dy;
-        int dz;
-        for (dz = -R; dz <= R; dz++) {
-            for (dy = -R; dy <= R; dy++) {
-                for (dx = -R; dx <= R; dx++) {
-                    float d2;
-                    if (dx == 0 && dy == 0 && dz == 0) {
-                        continue;
-                    }
-                    d2 = (float)(dx * dx + dy * dy + dz * dz) * spacing * spacing;
-                    if (d2 < h2) {
-                        ref++;
-                    }
-                }
-            }
-        }
-        b->neigh_ref = (ref > 0) ? ref : 1;
-    }
+    set_spacing(b, spacing);
     for (ix = 0; ix < 3; ix++) {
         ext[ix] = hi[ix] - lo[ix];
         if (ext[ix] <= 0.0f) {
@@ -192,30 +212,41 @@ int brine_emit_box(Brine *b, const float lo[3], const float hi[3], float spacing
             n[ix] = 1;
         }
     }
-    if (brine_reserve(b, b->count + (size_t)n[0] * (size_t)n[1] * (size_t)n[2]) != 0) {
+    if (brine_reserve(b, b->count + (size_t)n[0] * (size_t)n[1] *
+                                 (size_t)n[2]) != 0) {
         return -1;
     }
     for (iz = 0; iz < n[2]; iz++) {
         for (iy = 0; iy < n[1]; iy++) {
             for (ix = 0; ix < n[0]; ix++) {
-                Vec3 q = v3(lo[0] + ((float)ix + 0.5f) * spacing,
-                            lo[1] + ((float)iy + 0.5f) * spacing,
-                            lo[2] + ((float)iz + 0.5f) * spacing);
-                size_t i = b->count;
-                b->pos[i] = q;
-                b->vel[i] = v3(0.0f, 0.0f, 0.0f);
-                b->pred[i] = q;
-                b->delta[i] = v3(0.0f, 0.0f, 0.0f);
-                b->omega[i] = v3(0.0f, 0.0f, 0.0f);
-                b->rho[i] = b->s.rest_density;
-                b->lambda[i] = 0.0f;
-                b->omega_mag[i] = 0.0f;
-                b->count++;
+                push_particle(b, v3(lo[0] + ((float)ix + 0.5f) * spacing,
+                                    lo[1] + ((float)iy + 0.5f) * spacing,
+                                    lo[2] + ((float)iz + 0.5f) * spacing));
                 added++;
             }
         }
     }
     return added;
+}
+
+int brine_emit(Brine *b, const float *xyz, size_t n, float spacing)
+{
+    size_t i;
+
+    if (spacing <= 0.0f || n == 0 || xyz == NULL) {
+        return -1;
+    }
+    if (n > (size_t)INT_MAX) {
+        return -1;
+    }
+    set_spacing(b, spacing);
+    if (brine_reserve(b, b->count + n) != 0) {
+        return -1;
+    }
+    for (i = 0; i < n; i++) {
+        push_particle(b, v3(xyz[i * 3 + 0], xyz[i * 3 + 1], xyz[i * 3 + 2]));
+    }
+    return (int)n;
 }
 
 void brine_step(Brine *b, float dt)
@@ -350,7 +381,7 @@ void brine_apply_force_local(Brine *b, float dt, const Vec3 p, float r,
 }
 
 void brine_apply_force(Brine *b, float dt, const float p[3], float r,
-                      const float f[3])
+                       const float f[3])
 {
     Vec3 vp = v3(p[0], p[1], p[2]);
     Vec3 vf = v3(f[0], f[1], f[2]);

@@ -3,6 +3,7 @@
 
 #include "brine.h"
 #include "glapi.h"
+#include "wheel.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -19,22 +20,13 @@
 #define SPLAT 1.6f
 #define FOAM_GAIN 0.35f
 
-#define WHEEL_X 0.0f
-#define WHEEL_Y 0.12f
-#define WHEEL_Z 0.0f
-#define WHEEL_R 0.13f
-#define WHEEL_HUB 0.018f
-#define WHEEL_BLADES 6
-#define WHEEL_RB (WHEEL_R * 0.90f)
-#define WHEEL_BR 0.05f
-#define WHEEL_DRAG 3.0f
-#define WHEEL_INERTIA 0.03f
-#define WHEEL_BEARING 0.75f
-#define WHEEL_OMAX 9.0f
-#define MILL_FORCE 1.3f
+#define WATER_Y 0.16f
+#define GRIP 0.45f
+#define RESTITUTION 0.05f
 
-static float wheel_theta = 0.0f;
-static float wheel_omega = 0.0f;
+static Wheel wheel;
+static float particle_r = 0.0f;
+static size_t wheel_contacts = 0;
 
 static float mouse_force[3] = {0.0f, 0.0f, 0.0f};
 static int mouse_down = 0;
@@ -115,9 +107,11 @@ static const char *FS_COMP_A =
     "uniform vec3 uBmax;\n"
     "uniform vec3 uWheelC;\n"
     "uniform float uWheelR;\n"
-    "uniform float uWheelHub;\n"
+    "uniform float uWheelBladeT;\n"
+    "uniform float uWheelBladeZ;\n"
     "uniform float uWheelBlades;\n"
     "uniform float uWheelTheta;\n"
+    "uniform float uWaterY;\n"
     "const float MB_THRESH = 0.5;\n"
     "float hash(vec2 p){\n"
     "  p = fract(p * vec2(123.34, 456.21));\n"
@@ -134,28 +128,60 @@ static const char *FS_COMP_A =
     "  float d = hash(i + vec2(1.0, 1.0));\n"
     "  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);\n"
     "}\n"
-    "int wheelHit(vec3 o, vec3 d, out vec3 wc){\n"
-    "  if (abs(d.z) < 1.0e-6) return 0;\n"
-    "  float t = (uWheelC.z - o.z) / d.z;\n"
-    "  if (t <= 0.0) return 0;\n"
-    "  vec3 p = o + d * t;\n"
-    "  float dx = p.x - uWheelC.x;\n"
-    "  float dy = p.y - uWheelC.y;\n"
-    "  float r = sqrt(dx * dx + dy * dy);\n"
-    "  if (r > uWheelR) return 0;\n"
-    "  float a = atan(dy, dx) - uWheelTheta;\n"
-    "  float seg = 6.2831853 / uWheelBlades;\n"
-    "  float fa = mod(a, seg);\n"
-    "  float da = min(fa, seg - fa);\n"
-    "  float blade = step(da, seg * 0.15);\n"
-    "  float rim = step(uWheelR - 0.016, r);\n"
-    "  float hub = step(r, uWheelHub);\n"
-    "  if (max(blade, max(rim, hub)) < 0.5) return 0;\n"
-    "  float lam = 0.5 + 0.5 * max(dot(vec3(0.0, 0.0, 1.0), normalize(uSunDir)), 0.0);\n"
-    "  vec3 base = vec3(0.44, 0.30, 0.19) * lam;\n"
-    "  base = mix(base, vec3(0.28, 0.18, 0.12), smoothstep(0.86, 1.0, r / uWheelR));\n"
-    "  base = mix(base, vec3(0.34, 0.35, 0.37), hub);\n"
-    "  wc = base;\n"
+    "float wheelBladeD(vec3 p){\n"
+    "  vec3 q = p - uWheelC;\n"
+    "  float seg = 6.28318530718 / uWheelBlades;\n"
+    "  vec3 he = vec3(0.5 * uWheelR, 0.5 * uWheelBladeT, 0.5 * uWheelBladeZ);\n"
+    "  float best = 1.0e9;\n"
+    "  for (int k = 0; k < 16; k++) {\n"
+    "    if (k >= int(uWheelBlades)) break;\n"
+    "    float a = uWheelTheta + seg * float(k);\n"
+    "    float ca = cos(a);\n"
+    "    float sa = sin(a);\n"
+    "    float rl = q.x * ca + q.y * sa;\n"
+    "    float tl = -q.x * sa + q.y * ca;\n"
+    "    vec3 b = vec3(rl - he.x, tl, q.z);\n"
+    "    vec3 dv = abs(b) - he;\n"
+    "    best = min(best, length(max(dv, 0.0)) + min(max(dv.x, max(dv.y, dv.z)), 0.0));\n"
+    "  }\n"
+    "  return best;\n"
+    "}\n"
+    "float wheelSDF(vec3 p){\n"
+    "  return wheelBladeD(p);\n"
+    "}\n"
+    "int wheelHit(vec3 o, vec3 d, out vec3 wc, out vec3 wp){\n"
+    "  vec3 oc = o - uWheelC;\n"
+    "  float R = uWheelR + 0.5 * max(uWheelBladeT, uWheelBladeZ);\n"
+    "  float b = dot(oc, d);\n"
+    "  float c = dot(oc, oc) - R * R;\n"
+    "  float disc = b * b - c;\n"
+    "  if (disc < 0.0) return 0;\n"
+    "  float sq = sqrt(disc);\n"
+    "  float t = max(-b - sq, 0.0);\n"
+    "  float tmax = -b + sq;\n"
+    "  if (tmax <= 0.0) return 0;\n"
+    "  int hit = 0;\n"
+    "  for (int i = 0; i < 64; i++) {\n"
+    "    if (t > tmax) break;\n"
+    "    vec3 p = o + d * t;\n"
+    "    float sd = wheelSDF(p);\n"
+    "    if (sd < 5.0e-4) { hit = 1; wp = p; break; }\n"
+    "    t += max(sd, 1.0e-4);\n"
+    "  }\n"
+    "  if (hit == 0) return 0;\n"
+    "  float e = 8.0e-4;\n"
+    "  vec3 n = normalize(vec3(\n"
+    "      wheelSDF(wp + vec3(e, 0.0, 0.0)) - wheelSDF(wp - vec3(e, 0.0, 0.0)),\n"
+    "      wheelSDF(wp + vec3(0.0, e, 0.0)) - wheelSDF(wp - vec3(0.0, e, 0.0)),\n"
+    "      wheelSDF(wp + vec3(0.0, 0.0, e)) - wheelSDF(wp - vec3(0.0, 0.0, e))));\n"
+    "  vec3 base = vec3(0.70, 0.72, 0.75);\n"
+    "  if (dot(n, d) > 0.0) n = -n;\n"
+    "  vec3 sun = normalize(uSunDir);\n"
+    "  vec3 V = normalize(o - wp);\n"
+    "  float lam = 0.42 + 0.58 * max(dot(n, sun), 0.0);\n"
+    "  float spec = pow(max(dot(reflect(-sun, n), V), 0.0), 48.0);\n"
+    "  vec3 amb = vec3(0.10, 0.12, 0.15) * (0.5 + 0.5 * n.y);\n"
+    "  wc = base * lam + amb + vec3(1.0, 0.97, 0.90) * spec * 0.40;\n"
     "  return 1;\n"
     "}\n";
 
@@ -187,7 +213,8 @@ static const char *FS_COMP_A2 =
     "}\n"
     "vec3 sceneColor(vec3 o, vec3 d){\n"
     "  vec3 wcol;\n"
-    "  if (wheelHit(o, d, wcol) == 1) return wcol;\n"
+    "  vec3 wpd;\n"
+    "  if (wheelHit(o, d, wcol, wpd) == 1) return wcol;\n"
     "  float tb = 1.0e30;\n"
     "  int face = -1;\n"
     "  if (d.y < -1.0e-6) {\n"
@@ -303,6 +330,16 @@ static const char *FS_COMP_B =
     "    fcol = mix(vec3(0.82, 0.87, 0.92), vec3(1.0), bub) * amt;\n"
     "  }\n"
     "  col = mix(col, fcol, clamp(foam * 1.2, 0.0, 1.0));\n"
+    "  vec3 wcol;\n"
+    "  vec3 wp;\n"
+    "  vec2 wndc = vUV * 2.0 - 1.0;\n"
+    "  vec3 wdir = normalize((uInvView * vec4(wndc.x / uProj[0][0], wndc.y / uProj[1][1], -1.0, 0.0)).xyz);\n"
+    "  if (wheelHit(uCamPos, wdir, wcol, wp) == 1) {\n"
+    "    float sub = clamp((uWaterY - wp.y) / 0.05, 0.0, 1.0);\n"
+    "    vec3 deep = wcol * 0.45 + vec3(0.10, 0.32, 0.42);\n"
+    "    wcol = mix(wcol, deep, sub * 0.6);\n"
+    "    col = mix(col, wcol, 0.96);\n"
+    "  }\n"
     "  frag = vec4(col, 1.0);\n"
     "}\n";
 
@@ -538,79 +575,14 @@ static void dump_ppm(const char *path, int w, int h)
     free(buf);
 }
 
-static void wheel_update(Brine *b, float dt)
+static void sim_step(Brine *b, float dt)
 {
-    const float *pos = brine_positions(b);
-    const float *vel = brine_velocities(b);
-    size_t n = brine_count(b);
-    float seg = (float)(2.0 * 3.14159265358979323846) / (float)WHEEL_BLADES;
-    float torque = 0.0f;
-    int k;
-    size_t i;
-    float mill_p[3];
-    float mill_f[3];
-
-    mill_p[0] = 0.0f;
-    mill_p[1] = 0.10f;
-    mill_p[2] = 0.0f;
-    mill_f[0] = MILL_FORCE;
-    mill_f[1] = 0.0f;
-    mill_f[2] = 0.0f;
-    brine_apply_force(b, dt, mill_p, 2.5f, mill_f);
-
-    for (k = 0; k < WHEEL_BLADES; k++) {
-        float ang = wheel_theta + seg * (float)k;
-        float ca = cosf(ang);
-        float sa = sinf(ang);
-        float bx = WHEEL_X + WHEEL_RB * ca;
-        float by = WHEEL_Y + WHEEL_RB * sa;
-        float sumx = 0.0f;
-        float sumy = 0.0f;
-        float wsum = 0.0f;
-
-        for (i = 0; i < n; i++) {
-            float dx = pos[i * 3 + 0] - bx;
-            float dy = pos[i * 3 + 1] - by;
-            float dz = pos[i * 3 + 2] - WHEEL_Z;
-            float d2 = dx * dx + dy * dy + dz * dz;
-            if (d2 < WHEEL_BR * WHEEL_BR) {
-                float t = 1.0f - d2 / (WHEEL_BR * WHEEL_BR);
-                sumx += vel[i * 3 + 0] * t;
-                sumy += vel[i * 3 + 1] * t;
-                wsum += t;
-            }
-        }
-        if (wsum > 1.0e-3f) {
-            float tang = (sumx / wsum) * (-sa) + (sumy / wsum) * ca;
-            torque += tang * WHEEL_RB * wsum;
-        }
-    }
-
-    wheel_omega += torque * dt / WHEEL_INERTIA;
-    wheel_omega *= expf(-dt * WHEEL_BEARING);
-    if (wheel_omega > WHEEL_OMAX) {
-        wheel_omega = WHEEL_OMAX;
-    }
-    if (wheel_omega < -WHEEL_OMAX) {
-        wheel_omega = -WHEEL_OMAX;
-    }
-    wheel_theta += wheel_omega * dt;
-
-    for (k = 0; k < WHEEL_BLADES; k++) {
-        float ang = wheel_theta + seg * (float)k;
-        float ca = cosf(ang);
-        float sa = sinf(ang);
-        float bp[3];
-        float bf[3];
-
-        bp[0] = WHEEL_X + WHEEL_RB * ca;
-        bp[1] = WHEEL_Y + WHEEL_RB * sa;
-        bp[2] = WHEEL_Z;
-        bf[0] = WHEEL_DRAG * (-sa * wheel_omega * WHEEL_RB);
-        bf[1] = WHEEL_DRAG * (ca * wheel_omega * WHEEL_RB);
-        bf[2] = 0.0f;
-        brine_apply_force(b, dt, bp, WHEEL_BR, bf);
-    }
+    brine_step(b, dt);
+    wheel_step(&wheel, dt);
+    wheel_contacts += wheel_collide(&wheel, (float *)brine_positions(b),
+                                    (float *)brine_velocities(b),
+                                    brine_count(b), particle_r, RESTITUTION,
+                                    GRIP);
 }
 
 
@@ -685,12 +657,53 @@ int main(int argc, char **argv)
     p.surface_tension = 0.00f;
     p.h = spacing * 1.5f;
 
+    particle_r = spacing * 0.5f;
+    wheel_init(&wheel);
+
     b = brine_new(&p);
     if (b == NULL) {
         fprintf(stderr, "brine: out of memory\n");
         return 1;
     }
-    brine_emit_box(b, lo, hi, spacing);
+
+    {
+        Brine *seed = brine_new(&p);
+        const float *sp;
+        float *keep;
+        size_t sn;
+        size_t skipped;
+        size_t i;
+
+        if (seed == NULL || brine_emit_box(seed, lo, hi, spacing) < 0) {
+            fprintf(stderr, "brine: out of memory\n");
+            return 1;
+        }
+        sn = brine_count(seed);
+        sp = brine_positions(seed);
+        keep = (float *)malloc(sn * 3 * sizeof *keep);
+        if (keep == NULL) {
+            fprintf(stderr, "brine: out of memory\n");
+            return 1;
+        }
+        skipped = 0;
+        for (i = 0; i < sn; i++) {
+            if (wheel_contains(&wheel, sp + i * 3, particle_r)) {
+                skipped++;
+                continue;
+            }
+            keep[(i - skipped) * 3 + 0] = sp[i * 3 + 0];
+            keep[(i - skipped) * 3 + 1] = sp[i * 3 + 1];
+            keep[(i - skipped) * 3 + 2] = sp[i * 3 + 2];
+        }
+        if (sn - skipped == 0 || brine_emit(b, keep, sn - skipped, spacing) < 0) {
+            fprintf(stderr, "brine: out of memory\n");
+            return 1;
+        }
+        printf("brine: %zu particles in the tank, %zu left where the wheel sits\n",
+               sn, skipped);
+        free(keep);
+        brine_free(seed);
+    }
     cap = brine_count(b);
 
     if (!glfwInit()) {
@@ -776,18 +789,17 @@ int main(int argc, char **argv)
         }
         acc += frame;
 
+        wheel_contacts = 0;
         if (!cam.paused) {
             if (fixed_steps > 0) {
                 int s;
                 for (s = 0; s < fixed_steps; s++) {
-                    brine_step(b, (float)dt);
-                    wheel_update(b, (float)dt);
+                    sim_step(b, (float)dt);
                 }
             } else {
                 int sub = 0;
                 while (acc >= dt && sub < 8) {
-                    brine_step(b, (float)dt);
-                    wheel_update(b, (float)dt);
+                    sim_step(b, (float)dt);
                     acc -= dt;
                     sub++;
                 }
@@ -901,9 +913,11 @@ int main(int argc, char **argv)
             GLint l_bmax = glGetUniformLocation(prog_comp, "uBmax");
             GLint l_wheellc = glGetUniformLocation(prog_comp, "uWheelC");
             GLint l_wheelr = glGetUniformLocation(prog_comp, "uWheelR");
-            GLint l_wheelhub = glGetUniformLocation(prog_comp, "uWheelHub");
+            GLint l_wheelbladet = glGetUniformLocation(prog_comp, "uWheelBladeT");
+            GLint l_wheelbladez = glGetUniformLocation(prog_comp, "uWheelBladeZ");
             GLint l_wheelblades = glGetUniformLocation(prog_comp, "uWheelBlades");
             GLint l_wheeltheta = glGetUniformLocation(prog_comp, "uWheelTheta");
+            GLint l_watery = glGetUniformLocation(prog_comp, "uWaterY");
 
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, fw, fh);
@@ -921,11 +935,13 @@ int main(int argc, char **argv)
             glUniform1f(l_time, (float)now);
             glUniform3f(l_bmin, XMIN, YMIN, ZMIN);
             glUniform3f(l_bmax, XMAX, YMAX, ZMAX);
-            glUniform3f(l_wheellc, WHEEL_X, WHEEL_Y, WHEEL_Z);
-            glUniform1f(l_wheelr, WHEEL_R);
-            glUniform1f(l_wheelhub, WHEEL_HUB);
-            glUniform1f(l_wheelblades, (float)WHEEL_BLADES);
-            glUniform1f(l_wheeltheta, wheel_theta);
+            glUniform3f(l_wheellc, wheel.cx, wheel.cy, wheel.cz);
+            glUniform1f(l_wheelr, wheel.radius);
+            glUniform1f(l_wheelbladet, wheel.blade_t);
+            glUniform1f(l_wheelbladez, wheel.blade_z);
+            glUniform1f(l_wheelblades, (float)wheel.blades);
+            glUniform1f(l_wheeltheta, wheel.theta);
+            glUniform1f(l_watery, WATER_Y);
             glBindVertexArray(vao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
@@ -962,6 +978,29 @@ int main(int argc, char **argv)
                     (double)p.h, (double)spacing,
                     (double)xmn, (double)xmx, (double)ymn, (double)ymx,
                     (double)zmn, (double)zmx);
+            fprintf(stderr, "brine: wheel theta=%.2f omega=%.2f contacts=%zu\n",
+                    (double)wheel.theta, (double)wheel.omega, wheel_contacts);
+            {
+                const float *vv = brine_velocities(b);
+                float near_max = 0.0f, all_max = 0.0f, near_sum = 0.0f;
+                int near_n = 0;
+                size_t q;
+                for (q = 0; q < cap; q++) {
+                    float vx = vv[q * 3], vy = vv[q * 3 + 1], vz = vv[q * 3 + 2];
+                    float s = sqrtf(vx * vx + vy * vy + vz * vz);
+                    float dxw = pp[q * 3] - wheel.cx;
+                    float dyw = pp[q * 3 + 1] - wheel.cy;
+                    float dzw = pp[q * 3 + 2] - wheel.cz;
+                    if (s > all_max) { all_max = s; }
+                    if (dxw * dxw + dyw * dyw + dzw * dzw < 0.04f) {
+                        near_sum += s; near_n++;
+                        if (s > near_max) { near_max = s; }
+                    }
+                }
+                fprintf(stderr, "brine: speed near wheel max=%.3f mean=%.3f (n=%d), all max=%.3f\n",
+                        (double)near_max, (double)(near_n ? near_sum / (float)near_n : 0.0f),
+                        near_n, (double)all_max);
+            }
             dump_ppm(dump, fw, fh);
             break;
         }

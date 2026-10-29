@@ -1,4 +1,5 @@
 #include "brine.h"
+#include "wheel.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -107,6 +108,93 @@ int main(void)
               "secondaries stay bit-identical (deterministic)");
         brine_free(c);
         brine_free(d);
+    }
+
+    {
+        Wheel w;
+        float q[3];
+        float v[3];
+
+        wheel_init(&w);
+        w.theta = 0.0f;
+        w.omega = 0.0f;
+        q[0] = w.cx + 0.06f;
+        q[1] = w.cy;
+        q[2] = w.cz;
+        v[0] = v[1] = v[2] = 0.0f;
+        CHECK(wheel_collide(&w, q, v, 1, 0.0275f, 0.05f, 0.45f) > 0,
+              "blade touches an embedded particle");
+        CHECK(fabsf(q[1] - w.cy) >= 0.0275f + 0.5f * w.blade_t - 1.0e-4f,
+              "blade pushes the particle out of its body");
+
+        wheel_init(&w);
+        w.theta = 0.0f;
+        w.omega = 2.0f;
+        q[0] = w.cx + 0.06f;
+        q[1] = w.cy + 0.0275f + 0.5f * w.blade_t - 0.004f;
+        q[2] = w.cz;
+        v[0] = v[1] = v[2] = 0.0f;
+        wheel_collide(&w, q, v, 1, 0.0275f, 0.05f, 0.45f);
+        CHECK(v[1] > 0.05f, "a spinning blade drags the particle along");
+        CHECK(q[1] > w.cy, "the particle is pushed clear of the blade face");
+
+        wheel_init(&w);
+        w.omega = 3.0f;
+        for (step = 0; step < 600; step++) {
+            wheel_step(&w, 1.0f / 120.0f);
+        }
+        CHECK(isfinite(w.theta), "wheel angle stays finite");
+    }
+
+    {
+        Brine *e = brine_new(&p);
+        float xyz[9] = {0.1f, 0.2f, 0.3f, -0.4f, 0.5f, 0.6f, 0.0f, 0.0f, 0.0f};
+        const float *q;
+
+        CHECK(e != NULL, "world for emit is created");
+        CHECK(brine_emit(e, xyz, 3, 0.05f) == 3, "emit adds the given particles");
+        CHECK(brine_count(e) == 3, "emit count matches the batch");
+        q = brine_positions(e);
+        CHECK(q[0] == 0.1f && q[4] == 0.5f && q[8] == 0.0f,
+              "emit keeps the positions it was given");
+        CHECK(brine_density_at(e, xyz) > 0.0f,
+              "emit derives the particle mass from the spacing");
+        CHECK(brine_emit(e, xyz, 0, 0.05f) < 0, "emit rejects an empty batch");
+        CHECK(brine_emit(e, xyz, 3, 0.0f) < 0, "emit rejects a bad spacing");
+        brine_free(e);
+    }
+
+    {
+        Wheel w;
+        float q[3];
+        float v[3];
+        int mismatch = 0;
+        int ix;
+        int iy;
+        int iz;
+
+        wheel_init(&w);
+        w.omega = 0.0f;
+        w.theta = 0.35f;
+        for (iz = -4; iz <= 4; iz++) {
+            for (iy = -6; iy <= 6; iy++) {
+                for (ix = -8; ix <= 8; ix++) {
+                    int want;
+                    int got;
+
+                    q[0] = w.cx + (float)ix * 0.03f;
+                    q[1] = w.cy + (float)iy * 0.03f;
+                    q[2] = w.cz + (float)iz * 0.02f;
+                    v[0] = v[1] = v[2] = 0.0f;
+                    want = wheel_contains(&w, q, 0.0275f);
+                    got = wheel_collide(&w, q, v, 1, 0.0275f, 0.05f, 0.0f) > 0;
+                    if (want != got) {
+                        mismatch++;
+                    }
+                }
+            }
+        }
+        CHECK(mismatch == 0, "wheel_contains agrees with wheel_collide");
     }
 
     brine_free(a);

@@ -1,6 +1,6 @@
 CC        = cc
 WARN      = -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes -Wconversion
-CFLAGS    = -std=c11 -O2 $(WARN) -Iinclude
+CFLAGS    = -std=c11 -O2 $(WARN) -Iinclude -Idemos
 LDFLAGS   = -lm
 PREFIX   ?= /usr/local
 
@@ -15,10 +15,10 @@ DROP      ?= drop
 DROP_SRC   = $(CORE) demos/drop.c
 
 TEST      ?= brine_test
-TEST_SRC   = $(CORE) tests/test_brine.c
+TEST_SRC   = $(CORE) demos/wheel.c tests/test_brine.c
 
 GL        ?= brine_gl
-GL_SRC     = $(CORE) demos/gl.c
+GL_SRC     = $(CORE) demos/wheel.c demos/gl.c
 GL_CFLAGS  = $(shell pkg-config --cflags glfw3 2>/dev/null)
 GL_LIBS    = $(shell pkg-config --libs glfw3 2>/dev/null) -lGL
 GL_OMP    ?= -fopenmp

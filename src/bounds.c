@@ -4,8 +4,10 @@ void bounds_apply(Brine *b)
 {
     float e = b->s.restitution;
     float margin = b->s.spacing * 0.5f;
-    Vec3 lo = v3(b->s.bmin.x + margin, b->s.bmin.y + margin, b->s.bmin.z + margin);
-    Vec3 hi = v3(b->s.bmax.x - margin, b->s.bmax.y - margin, b->s.bmax.z - margin);
+    Vec3 lo = v3(b->s.bmin.x + margin, b->s.bmin.y + margin,
+                 b->s.bmin.z + margin);
+    Vec3 hi = v3(b->s.bmax.x - margin, b->s.bmax.y - margin,
+                 b->s.bmax.z - margin);
     size_t i;
 
     for (i = 0; i < b->count; i++) {

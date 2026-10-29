@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- The GL demo's water wheel is now a physical body: six flat steel blades
+  (plates spanning the axle), a torus rim and a spherical hub, all spinning at
+  a fixed angular velocity and pushing the particles through an explicit
+  contact pass (push-out along the normal, restitution, and a grip that drags
+  the water the way the wheel turns). The wheel geometry lives in the demo
+  (`demos/wheel.c`), not in the library.
+- `brine_apply_drag` is gone from the API: nothing in the demo needs a
+  velocity-matching force field any more, and a wheel is a shape, not a field.
+- New `brine_emit` fills the world from an arbitrary array of positions, so the
+  demo can carve its starting lattice around the wheel instead of seeding
+  particles inside it (particles born inside a solid lattice explode the PBF
+  projection on the first steps).
+- The wheel is rendered by raymarching the same signed distance function the
+  collision code uses, so what you see is exactly what the water hits.
+
 ## 2.3.0 - 2026-10-16
 
 - The GL demo gains a water wheel: a millrace current pushes a six-bladed wheel,

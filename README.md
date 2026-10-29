@@ -30,7 +30,7 @@ back until the fluid density matches the target. Nothing here allocates behind
 your back, and nothing is random, so the same world stepped the same way gives
 the same numbers on every machine.
 
-The interface is five calls wide:
+A minimal world looks like this:
 
 ```c
 #include <brine.h>
@@ -107,15 +107,17 @@ as the same packed `x y z` layout as the fluid, plus a type per particle.
 ## Watching it move
 
 `make run-gl` opens a window and drops around a thousand particles into a small
-tub, next to a water wheel that the millrace current turns. Drag with the left
-mouse button to orbit, scroll to zoom, press space to pause and `r` to reset the
-view. The water is drawn with screen-space fluid rendering: every particle
-splats into one shared density field, the surface is taken at an isolevel, and
-the normals come from the field's gradient. A composite then refracts and
-reflects the tub behind it, ripples the surface, and lays the spray and foam on
-top. Set `BRINE_DUMP=out.ppm` to write a single frame and exit (with
-`BRINE_DUMP_FRAME=N` to pick the frame), which is handy for grabbing a still;
-`BRINE_WINDOW=WxH` sets the window size. Captures step a fixed number of
+tub, next to a six-bladed water wheel that turns at a fixed speed and ploughs
+through the water: the blades are real plates in the demo's collision pass, so
+they shove the particles around instead of nudging them with a force field.
+Drag with the left mouse button to orbit, scroll to zoom, press space to pause
+and `r` to reset the view. The water is drawn with screen-space fluid rendering:
+every particle splats into one shared density field, the surface is taken at an
+isolevel, and the normals come from the field's gradient. A composite then
+refracts and reflects the tub behind it, ripples the surface, and lays the spray
+and foam on top. Set `BRINE_DUMP=out.ppm` to write a single frame and exit
+(with `BRINE_DUMP_FRAME=N` to pick the frame), which is handy for grabbing a
+still; `BRINE_WINDOW=WxH` sets the window size. Captures step a fixed number of
 substeps per frame (`BRINE_STEPS`) so a still or a clip comes out the same every
 run. `make gif` drives exactly that and encodes the frames with ffmpeg, and
 `make golden` diffs a rendered frame against the stored `tests/golden.ppm` with

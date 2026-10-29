@@ -88,6 +88,6 @@ void foam_emit(Brine *b, float dt);
 void foam_advance(Brine *b, float dt);
 
 void brine_apply_force_local(Brine *b, float dt, const Vec3 p, float r,
-                            const Vec3 f);
+                             const Vec3 f);
 
 #endif
