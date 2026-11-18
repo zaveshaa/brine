@@ -5,7 +5,7 @@
 <h1 align="center">brine</h1>
 
 <p align="center">
-  An SPH fluid simulation in C.
+  position-based fluid simulation in C
 </p>
 
 <p align="center">
@@ -20,17 +20,46 @@
        alt="no dependencies">
 </p>
 
-## Overview
+## build
 
-`brine` is a small library that turns a block of particles into water. You
-create a world, fill a box with particles, call `brine_step` in your frame
-loop, and read the particles back to draw them. The solver is position-based:
-it predicts where every particle wants to move, then projects the positions
-back until the fluid density matches the target. Nothing here allocates behind
-your back, and nothing is random, so the same world stepped the same way gives
-the same numbers on every machine.
+```sh
+make
+```
 
-A minimal world looks like this:
+`make` builds the C11 terminal demo. The core library has no dependencies;
+the terminal demo needs only `-lm`. `make run-gl` additionally requires GLFW
+and an OpenGL 3.3 implementation.
+
+## run
+
+```sh
+make run       # terminal demo
+make run-gl    # OpenGL demo
+```
+
+Other targets:
+
+```sh
+make test      # run the checks
+make gif       # record brine.gif with ffmpeg
+make golden    # compare the GL frame with tests/golden.ppm
+make clean     # remove build files
+```
+
+The demos accept these environment variables:
+
+```text
+BRINE_WINDOW=WxH       window size
+BRINE_STEPS=N          substeps per frame
+BRINE_DUMP=out.ppm     write one frame and exit
+BRINE_DUMP_FRAME=N     select a frame
+BRINE_GIF=prefix       write PPM frames for make gif
+```
+
+## API
+
+Create a world, emit particles, and advance it with fixed or variable
+timesteps:
 
 ```c
 #include <brine.h>
@@ -54,78 +83,45 @@ for (;;) {
 brine_free(w);
 ```
 
-## Build
+`brine_positions` returns packed `x y z` floats. `brine_velocities` returns
+packed velocities, and `brine_density_at` evaluates the density field at an
+arbitrary position.
 
-    make            build the terminal demo
-    make test       run the checks
-    make run        watch a block of water settle
-    make run-gl     watch it in a window (needs GLFW and an OpenGL 3.3 driver)
-    make gif        record the GL demo to an animated GIF (needs ffmpeg)
-    make golden     compare the GL render against tests/golden.ppm
+Set `secondary` in `BrineParams` to enable spray and foam particles. Their
+positions, ages, and types are available through
+`brine_secondary_positions`, `brine_secondary_ages`, and
+`brine_secondary_types`.
 
-The build is warning-clean under `-Wall -Wextra -Wpedantic -Wshadow
--Wstrict-prototypes -Wconversion`; CI builds it with every warning fatal.
-There is nothing to link but the C library itself and `-lm`. The OpenGL demo
-is the one extra: it links `glfw`, and nothing else, and drags in no loader
-library. `demos/glapi.h` is a hand-written stub that grabs the handful of GL
-3.3 entry points it needs from `glfwGetProcAddress`. The demo also builds the
-solver with OpenMP when the compiler has it, so `make run-gl` fills over a
-thousand particles without stalling; build with `make gl GL_OMP=` to leave it
-single-threaded.
+## implementation
 
-## What runs under the hood
+Each step integrates gravity and predicts particle positions, inserts particles
+into a uniform grid with a cell width equal to the smoothing radius, sums density
+with the poly6 kernel, and solves density constraints with Lagrange multipliers.
+Predicted positions are projected iteratively toward the target rest density.
+Velocity is reconstructed from position change, with XSPH neighbour blending and
+box-boundary response.
 
-Every step does four things, in order.
+The solver follows the position-based fluids method of Müller, Solenthaler,
+Keiser and Gross (2013), including artificial pressure. All state is stored in
+the library; particle positions and densities are deterministic for a given
+world and timestep sequence.
 
-1. **Integrate.** Gravity is added to the velocity and a predicted position is
-   formed for each particle.
-2. **Buckets.** Particles are dropped into a uniform grid whose cell is one
-   smoothing radius wide, so a particle only looks at the 27 cells around it.
-3. **Project.** Density is summed with the poly6 kernel, a Lagrange multiplier
-   per particle corrects the density error, and the predicted positions are
-   nudged toward the rest density. This repeats for a few iterations.
-4. **React.** Velocity is read back from how far the particles moved, a small
-   XSPH term blends each particle's velocity toward its neighbours, and the box
-   walls push back.
+The GL demo uses screen-space fluid rendering: particles accumulate in a depth
+texture, the surface is extracted at an isolevel, normals are taken from its
+gradient, and a final pass composites refraction, reflection, spray, and foam.
+The demo can also render the solver to PPM frames.
 
-The solver is the position-based fluids method of Müller, Solenthaler,
-Keiser and Gross (2013), including the artificial-pressure term that keeps a
-free surface from clumping.
+## layout
 
-## Reading the fluid
+```text
+include/    public C API
+src/        solver, spatial grid, kernels, bounds, and secondary particles
+demos/      terminal and OpenGL demos
+assets/     logo and test assets
+tests/      unit and golden-frame checks
+tools/      image comparison utility
+```
 
-`brine_positions` returns a packed `x y z` array, ready for a point sprite
-pass. `brine_density_at` samples the density field at an arbitrary point, which
-is what a ray tracer wants: march the ray and take the first place the density
-turns to water, and you have a surface without any marching cubes.
-
-Set `secondary` in the parameters and the solver also sheds spray and foam at
-the surface. `brine_secondary_count`, `brine_secondary_positions`,
-`brine_secondary_ages` and `brine_secondary_types` read those back; they come
-as the same packed `x y z` layout as the fluid, plus a type per particle.
-
-## Watching it move
-
-`make run-gl` opens a window and drops around a thousand particles into a small
-tub, next to a six-bladed water wheel that turns at a fixed speed and ploughs
-through the water: the blades are real plates in the demo's collision pass, so
-they shove the particles around instead of nudging them with a force field.
-Drag with the left mouse button to orbit, scroll to zoom, press space to pause
-and `r` to reset the view. The water is drawn with screen-space fluid rendering:
-every particle splats into one shared density field, the surface is taken at an
-isolevel, and the normals come from the field's gradient. A composite then
-refracts and reflects the tub behind it, ripples the surface, and lays the spray
-and foam on top. Set `BRINE_DUMP=out.ppm` to write a single frame and exit
-(with `BRINE_DUMP_FRAME=N` to pick the frame), which is handy for grabbing a
-still; `BRINE_WINDOW=WxH` sets the window size. Captures step a fixed number of
-substeps per frame (`BRINE_STEPS`) so a still or a clip comes out the same every
-run. `make gif` drives exactly that and encodes the frames with ffmpeg, and
-`make golden` diffs a rendered frame against the stored `tests/golden.ppm` with
-`tools/golden.c`.
-
-The terminal demo `make run` draws the same solver as ASCII and needs no
-window at all.
-
-## Licence
+## license
 
 MIT. See [LICENSE](LICENSE).
